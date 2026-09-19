@@ -2,7 +2,10 @@
 
 Staked arena build of Hopping Heads. Phase 0: the fork stood up, stripped to the arena model, wallet admission in place of X login. No chain calls yet.
 
-Full phase record, salvage map, schema and manual checks: [docs/phase0-strip.md](docs/phase0-strip.md).
+Phase records:
+
+- [docs/phase0-strip.md](docs/phase0-strip.md): the fork stood up, stripped, wallet gate, schema.
+- [docs/phase1-world.md](docs/phase1-world.md): the server owns the world. Seeds, the shared layout module, collection and mint validation, modes, movement flags, and what is still client side.
 
 ## Run it
 
@@ -35,7 +38,11 @@ npm run install-hooks  # pre-push hook that refuses a red gate
 client/index.html        the game, one file, served at /game
 server/src/index.js      express + socket.io entry
 server/src/ws/           lobby, tick, boink proximity check
-server/src/game/         prng, mapGenerator, collection rules, participant ids
+server/src/game/         rounds (seed issuance), lobbyFrags (fragment state, collection and mint rules),
+                         modes, mapGenerator, collection rules reference, participant ids
+shared/                  prng, layout, mapObstacles: one copy, loaded by server and client
+scripts/extract-obstacles.mjs
+                         re-records shared/mapObstacles.cjs from the real client (needs Chromium)
 server/src/utils/        wallet admission gate
 server/src/db/           pool, schema
 server/landing/          landing, terms, privacy
