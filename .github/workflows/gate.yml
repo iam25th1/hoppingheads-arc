@@ -24,8 +24,7 @@ jobs:
       - name: Gate
         run: npm run gate
 
-      # `npm run build` regenerates server/public/index.html from
-      # client/index.html. If that produces a diff, the mirror was committed
-      # stale and the gate above only passed because it fixed it in place.
-      - name: Mirror is committed in sync
+      # The gate must not modify the tree. If it does, something is being
+      # regenerated at check time instead of being committed.
+      - name: Gate left the tree clean
         run: git diff --exit-code

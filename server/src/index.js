@@ -55,7 +55,7 @@ app.get('/privacy', (req, res) => {
 });
 
 // Game client
-app.use("/game", express.static(path.join(__dirname, "..", "public")));
+app.use("/game", express.static(path.join(__dirname, "..", "..", "client")));
 
 // Serve landing page at root domain
 app.use(express.static(path.join(__dirname, "..", "landing")));

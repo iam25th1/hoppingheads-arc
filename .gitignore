@@ -7,3 +7,4 @@ cache/
 typechain-types/
 .DS_Store
 .lint-tmp/
+.build-tmp-*/

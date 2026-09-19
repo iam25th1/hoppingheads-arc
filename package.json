@@ -9,9 +9,7 @@
     "typecheck": "node scripts/typecheck.mjs",
     "lint": "node scripts/lint.mjs",
     "test": "node scripts/test.mjs",
-    "build": "npm run sync && npm run check-sync",
-    "sync": "node -e \"require('fs').copyFileSync('client/index.html','server/public/index.html'); console.log('[sync] client/index.html -> server/public/index.html')\"",
-    "check-sync": "node -e \"const fs=require('fs'),a=fs.readFileSync('client/index.html'),b=fs.readFileSync('server/public/index.html');if(!a.equals(b)){console.error('[check-sync] OUT OF SYNC: run npm run sync');process.exit(1)}console.log('[check-sync] OK')\"",
+    "build": "node scripts/build.mjs",
     "install-hooks": "node -e \"const fs=require('fs'),p=require('path');const src=p.join('scripts','git-hooks','pre-push');const dst=p.join('.git','hooks','pre-push');fs.copyFileSync(src,dst);fs.chmodSync(dst,0o755);console.log('[install-hooks] installed pre-push hook')\""
   },
   "keywords": [],
