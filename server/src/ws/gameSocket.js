@@ -4,7 +4,7 @@
  */
 
 import { query } from "../db/pool.js";
-import { awardGameCredits } from "../routes/store.js";
+import { verifySessionToken, shortAddress } from "../utils/walletAuth.js";
 
 const TICK_RATE = 100;
 const MAX_PLAYERS = 8;
@@ -85,45 +85,12 @@ function findOpenLobby() {
   return null;
 }
 
-import crypto from "crypto";
-const TWITTER_CLIENT_SECRET = process.env.TWITTER_CLIENT_SECRET;
-
-// Verify Twitter session signature (mirrors twitterAuth.js)
-function verifySession(token) {
-  if (!token || typeof token !== 'string') return null;
-  if (!TWITTER_CLIENT_SECRET) return null;
-  try {
-    const [session, sig] = token.split('.');
-    if (!session || !sig) return null;
-    const expected = crypto.createHmac('sha256', TWITTER_CLIENT_SECRET)
-      .update(session).digest('base64url');
-    if (sig !== expected) return null;
-    const data = JSON.parse(Buffer.from(session, 'base64url').toString());
-    // Sessions older than 7 days are rejected
-    if (Date.now() - data.ts > 7 * 24 * 60 * 60 * 1000) return null;
-    return data;
-  } catch {
-    return null;
-  }
-}
-
-// Check playtest access in DB
-async function hasPlaytestAccess(twitterId) {
-  if (!twitterId) return false;
-  try {
-    const r = await query('SELECT 1 FROM beta_access WHERE twitter_id = $1 LIMIT 1', [twitterId]);
-    return r.rows.length > 0;
-  } catch {
-    return false;
-  }
-}
-
 export function initGameSocket(io) {
   io.on('connection', (socket) => {
     let playerId = null;
     let currentLobby = null;
     let hasJoined = false;
-    let verifiedUser = null; // Twitter user from session
+    let verifiedUser = null; // recovered wallet address
 
     // Per-event rate limiters
     const posLimiter = createRateLimiter(15);  // 15 pos updates/sec max
@@ -135,75 +102,34 @@ export function initGameSocket(io) {
       // Prevent double-join
       if (hasJoined) return;
 
-      // PLAYTEST GATE: verify Twitter session and playtest access
-      const user = verifySession(session);
-      if (!user) {
-        socket.emit('auth:denied', { reason: 'Invalid session. Connect X first.' });
+      // WALLET GATE: the session token was issued to a recovered signer
+      const address = verifySessionToken(session);
+      if (!address) {
+        socket.emit('auth:denied', { reason: 'Connect a wallet first.' });
         return;
       }
-      const access = await hasPlaytestAccess(user.id);
-      if (!access) {
-        socket.emit('auth:denied', { reason: 'Playtest access required.' });
-        return;
+      // One seat per address across live lobbies
+      for (const l of lobbies.values()) {
+        if (l.status !== 'ended' && l.players.has(address)) {
+          socket.emit('auth:denied', { reason: 'This wallet is already in a lobby.' });
+          return;
+        }
       }
-      verifiedUser = user;
+      verifiedUser = address;
       hasJoined = true;
 
-      // Use Twitter username as canonical name (ignore client-supplied name)
-      const pName = sanitize(user.username, 12) || 'Player';
-      playerId = socket.id.slice(0, 8);
+      // Identity is the recovered address (ignore client-supplied name)
+      const pName = shortAddress(address);
+      playerId = address;
 
       let lobby = findOpenLobby();
       if (!lobby) lobby = createLobby();
 
       const playerIndex = lobby.players.size;
 
-      // Validate skin against whitelist, or load from store loadout
+      // Validate skin against whitelist
       let appearance;
-      let cosmeticExtras = {};
-      try {
-        // Try loading equipped store loadout (including cosmetic effects)
-        const loadoutResult = await query(
-          `SELECT sc.config AS skin_config, es.config AS eye_config, hw.config AS head_config,
-                  gc.config AS glow_config, te.config AS trail_config, nc.config AS name_config,
-                  bd.config AS badge_config
-           FROM player_loadout pl
-           LEFT JOIN store_items sc ON sc.id = pl.skin_color AND sc.category = 'skin_color'
-           LEFT JOIN store_items es ON es.id = pl.eye_style AND es.category = 'eye_style'
-           LEFT JOIN store_items hw ON hw.id = pl.headwear AND hw.category = 'headwear'
-           LEFT JOIN store_items gc ON gc.id = pl.glow_color AND gc.category = 'glow_color'
-           LEFT JOIN store_items te ON te.id = pl.trail_effect AND te.category = 'trail_effect'
-           LEFT JOIN store_items nc ON nc.id = pl.name_color AND nc.category = 'name_color'
-           LEFT JOIN store_items bd ON bd.id = pl.badge AND bd.category = 'badge'
-           WHERE pl.twitter_id = $1`,
-          [user.id]
-        );
-        if (loadoutResult.rows.length > 0) {
-          const lo = loadoutResult.rows[0];
-          const parseConf = (c) => c ? (typeof c === 'string' ? JSON.parse(c) : c) : null;
-          const sc = parseConf(lo.skin_config);
-          const ec = parseConf(lo.eye_config);
-          const hc = parseConf(lo.head_config);
-          const gc = parseConf(lo.glow_config);
-          const tc = parseConf(lo.trail_config);
-          const nc = parseConf(lo.name_config);
-          const bd = parseConf(lo.badge_config);
-          appearance = {
-            skinColor: sc ? parseInt(sc.hex, 16) || sc.hex : (skin?.skinColor || 0xff8866),
-            eyeStyle: ec?.style || skin?.eyeStyle || 'X',
-            headStyle: hc?.style || skin?.headStyle || 'Horns',
-          };
-          // Cosmetic extras (sent once on join, not per tick)
-          if (gc) { cosmeticExtras.glowColor = parseInt(gc.hex, 16) || gc.hex; cosmeticExtras.glowIntensity = gc.intensity || 0.3; }
-          if (tc) { cosmeticExtras.trailType = tc.type; cosmeticExtras.trailColor = parseInt(tc.color, 16) || tc.color; }
-          if (nc) { cosmeticExtras.nameColor = nc.hex || nc.color; }
-          if (ec?.color) cosmeticExtras.eyeColor = parseInt(ec.color, 16) || ec.color;
-          if (hc?.color) cosmeticExtras.hwColor = parseInt(hc.color, 16) || hc.color;
-          if (bd) { cosmeticExtras.badge = bd.icon || null; }
-        }
-      } catch (e) {
-        console.warn('[MP] Loadout fetch failed:', e.message);
-      }
+      const cosmeticExtras = {};
 
       if (!appearance) {
         if (skin && VALID_SKINS.includes(skin.skinColor) &&
@@ -217,7 +143,7 @@ export function initGameSocket(io) {
 
       lobby.players.set(playerId, {
         id: playerId, socketId: socket.id, name: pName,
-        twitterId: user.id,
+        address,
         x:0, y:0, z:0, ry:0, score:0,
         fragments:[0,0,0,0,0], minted:0, moving:false,
         appearance, cosmeticExtras, index: playerIndex,
@@ -483,70 +409,50 @@ function endRound(io, lobby) {
   lobby.status = 'ended';
   const results = Array.from(lobby.players.values())
     .map(p => ({ id:p.id, name:sanitize(p.name, 12), score:p.score, minted:p.minted,
-      fragments:p.fragments.reduce((a,b)=>a+b,0), twitterId:p.twitterId }))
+      fragments:p.fragments.reduce((a,b)=>a+b,0) }))
     .sort((a, b) => b.score - a.score)
     .map((r, i) => ({ ...r, placement:i+1 }));
 
-  // Emit results without twitterId (don't leak to other players)
+  // Emit the public result fields only
   io.to(`lobby:${lobby.id}`).emit('round:end', { results: results.map(r => ({
     id:r.id, name:r.name, score:r.score, minted:r.minted, fragments:r.fragments, placement:r.placement
   }))});
   console.log(`[MP] Round ended lobby ${lobby.id}. Winner: ${results[0]?.name} (${results[0]?.score})`);
 
-  saveResults(results, lobby.mapIndex).catch(e => console.error('[MP] Save error:', e.message));
-  awardRoundCredits(results).catch(e => console.error('[MP] Credit award error:', e.message));
+  saveResults(results, lobby).catch(e => console.error('[MP] Save error:', e.message));
   setTimeout(() => lobbies.delete(lobby.id), 30000);
 }
 
-// Credit rewards for multiplayer rounds
-const CREDIT_REWARDS = {
-  play: 10,       // completing a round
-  first: 100,     // 1st place
-  second: 50,     // 2nd place
-  third: 25,      // 3rd place
-  scoreRate: 0.1, // 1 credit per 10 score points
-  scoreCap: 50,   // max score bonus
-};
-
-async function awardRoundCredits(results) {
+async function saveResults(results, lobby) {
+  // One rounds row per match. seed is the lobby map seed for now; phase 1
+  // replaces it with the run seed. commit_hash, signature and tx_hash stay
+  // null until phases 2 and 3.
+  const round = await query(
+    `INSERT INTO rounds (mode, map_index, seed, status, max_players, duration_secs, start_time, end_time, winner)
+     VALUES ('multiplayer', $1, $2, 'completed', $3, $4, to_timestamp($5 / 1000.0), to_timestamp($6 / 1000.0), $7) RETURNING id`,
+    [lobby.mapIndex, lobby.mapSeed, MAX_PLAYERS, ROUND_DURATION, lobby.startTime, lobby.endTime, results[0]?.id ?? null]
+  );
+  const roundId = round.rows[0].id;
   for (const r of results) {
-    if (!r.twitterId) continue;
-    let credits = CREDIT_REWARDS.play;
-
-    if (r.placement === 1) credits += CREDIT_REWARDS.first;
-    else if (r.placement === 2) credits += CREDIT_REWARDS.second;
-    else if (r.placement === 3) credits += CREDIT_REWARDS.third;
-
-    const scoreBonus = Math.min(CREDIT_REWARDS.scoreCap, Math.floor(r.score * CREDIT_REWARDS.scoreRate));
-    credits += scoreBonus;
-
-    const reason = `MP round #${r.placement} (score: ${r.score})`;
-    const newBal = await awardGameCredits(r.twitterId, credits, reason);
-    if (newBal !== null) {
-      console.log(`[MP] Awarded ${credits} credits to ${r.name} (bal: ${newBal})`);
-    }
-  }
-}
-
-async function saveResults(results, mapIndex) {
-  for (const r of results) {
-    const safeName = sanitize(r.name, 12) || 'Unknown';
+    // r.id is the recovered address. Every seat written here is human;
+    // a bot seat would carry a bot id and is_bot true (see game/ids.js).
     await query(
-      `INSERT INTO leaderboard (player_name, score, minted, fragments, placement, map_index) VALUES ($1,$2,$3,$4,$5,$6)`,
-      [safeName, r.score, r.minted, r.fragments, r.placement, mapIndex]
+      `INSERT INTO round_results (round_id, participant, is_bot, score, minted, fragments, placement)
+       VALUES ($1, $2, false, $3, $4, $5, $6)`,
+      [roundId, r.id, r.score, r.minted, r.fragments, r.placement]
     );
     await query(
-      `INSERT INTO player_stats (player_name, total_score, total_wins, total_rounds, total_minted, best_score)
+      `INSERT INTO player_stats (address, total_score, total_wins, total_rounds, total_minted, best_score)
        VALUES ($1, $2, $3, 1, $4, $5)
-       ON CONFLICT (player_name) DO UPDATE SET
+       ON CONFLICT (address) DO UPDATE SET
          total_score = player_stats.total_score + $2,
          total_wins = player_stats.total_wins + $3,
          total_rounds = player_stats.total_rounds + 1,
          total_minted = player_stats.total_minted + $4,
          best_score = GREATEST(player_stats.best_score, $5),
          updated_at = NOW()`,
-      [safeName, r.score, r.placement === 1 ? 1 : 0, r.minted, r.score]
+      [r.id, r.score, r.placement === 1 ? 1 : 0, r.minted, r.score]
     );
   }
-  console.log(`[MP] Saved ${results.length} results to DB`);
+  console.log(`[MP] Saved round ${roundId} with ${results.length} results`);
 }

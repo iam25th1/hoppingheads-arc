@@ -1,9 +1,9 @@
 node_modules/
 .env
+.env.*
+!.env.example
 *.log
 dist/
-artifacts/
-cache/
-typechain-types/
 .DS_Store
 .lint-tmp/
+.build-tmp-*/

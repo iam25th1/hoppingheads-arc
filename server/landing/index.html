@@ -33,7 +33,6 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Silkscreen&display=swap" rel="stylesheet">
-<script src="/tracker.js" async></script>
 <style>
 :root{
   --bg:#0a0614;--bg2:#0e0a1e;--bg3:#12102a;
@@ -218,8 +217,7 @@ footer{padding:clamp(24px,4vh,40px) clamp(16px,5vw,40px);display:flex;justify-co
   <div class="nav-links">
     <a href="javascript:void(0)" onclick="document.getElementById('features').scrollIntoView({behavior:'smooth'})">FEATURES</a>
     <a href="javascript:void(0)" onclick="document.getElementById('how').scrollIntoView({behavior:'smooth'})">HOW TO PLAY</a>
-    <a href="/store">STORE</a>
-    <a href="#playtest" class="nav-play">JOIN PLAYTEST</a>
+    <a href="/game" class="nav-play">PLAY</a>
   </div>
 </nav>
 
@@ -272,7 +270,7 @@ footer{padding:clamp(24px,4vh,40px) clamp(16px,5vw,40px);display:flex;justify-co
   </div>
   <div class="hero-sub">Competitive multiplayer pixel arena. Hop across 6 worlds. Collect fragments. Grow massive. Absorb your rivals. Last head hopping wins.</div>
   <div class="hero-cta">
-    <a href="#playtest" class="btn-primary">JOIN PLAYTEST</a>
+    <a href="/game" class="btn-primary">PLAY</a>
     <a href="javascript:void(0)" onclick="document.getElementById('how').scrollIntoView({behavior:'smooth'})" class="btn-ghost">HOW IT WORKS</a>
   </div>
 </div>
@@ -429,43 +427,6 @@ footer{padding:clamp(24px,4vh,40px) clamp(16px,5vw,40px);display:flex;justify-co
   <div class="chain-text">Classic mode: collect fragments, grow, absorb rivals, open chests, chase the crown. Last Head Hopping: no fragments, pure combat, 100 HP health bar, last head alive wins. Both modes playable online with up to 8 players.</div>
 </section>
 
-<!-- Playtest Access -->
-<section class="beta-section" id="playtest">
-  <div class="features-title" style="text-align:center">Join the <span style="color:var(--gold)">playtest</span>.</div>
-  <div class="beta-sub">Connect your X account, enter your playtest code, and you're in.</div>
-
-  <div class="beta-box">
-    <!-- Step 1: Connect X -->
-    <div id="beta-step1">
-      <div class="beta-step-label">STEP 1</div>
-      <a href="/auth/twitter?redirect=landing" class="beta-btn" id="beta-connect" onclick="window.hhTrack&&window.hhTrack('connect_x_click',{from:'landing'})">CONNECT X</a>
-    </div>
-
-    <!-- Step 2: Enter code (hidden until connected) -->
-    <div id="beta-step2" style="display:none">
-      <div class="beta-connected">Connected as <span id="beta-username">@user</span></div>
-      <div class="beta-step-label">STEP 2</div>
-      <div class="beta-code-row">
-        <input type="text" id="beta-code-input" placeholder="HOP-XXXX-XXXX" maxlength="16" autocomplete="off" spellcheck="false">
-        <button class="beta-btn" id="beta-redeem">REDEEM</button>
-      </div>
-      <div id="beta-msg" class="beta-msg"></div>
-      <button class="beta-disconnect" id="beta-disconnect-2">DISCONNECT X</button>
-    </div>
-
-    <!-- Access granted (hidden until redeemed) -->
-    <div id="beta-step3" style="display:none">
-      <div class="beta-granted">YOU'RE IN</div>
-      <div class="beta-granted-sub">Welcome as <span id="beta-username-3">@user</span></div>
-      <a href="https://play.hoppingheads.fun/game" class="btn-primary" style="margin-top:20px">PLAY NOW</a>
-      <button class="beta-disconnect" id="beta-disconnect-3">DISCONNECT X</button>
-    </div>
-  </div>
-
-  <div class="beta-waitlist">No code? Keep an eye on <a href="https://x.com/hoppingheads" target="_blank">@hoppingheads</a> for drops.</div>
-  <div style="font-size:clamp(9px,1vw,11px);color:var(--muted);margin-top:14px;max-width:420px;margin-left:auto;margin-right:auto;line-height:1.6">By joining the playtest, you agree to our <a href="/terms" style="color:var(--dim)">Terms of Service</a> and <a href="/privacy" style="color:var(--dim)">Privacy Policy</a>.</div>
-</section>
-
 <footer>
   <div class="footer-left">HOPPING HEADS 2026</div>
   <div class="footer-links">
@@ -473,7 +434,6 @@ footer{padding:clamp(24px,4vh,40px) clamp(16px,5vw,40px);display:flex;justify-co
     <a href="https://github.com/iam25th1" target="_blank">GitHub</a>
     <a href="/terms">Terms</a>
     <a href="/privacy">Privacy</a>
-    <a href="#playtest">Playtest</a>
   </div>
 </footer>
 
@@ -485,139 +445,6 @@ if(ticker){ticker.addEventListener('mouseenter',()=>ticker.style.animationPlaySt
 const obs=new IntersectionObserver(entries=>{entries.forEach(e=>{if(e.isIntersecting){e.target.style.opacity='1';e.target.style.transform='translateY(0)'}})},{threshold:0.1});
 document.querySelectorAll('.feat-card,.step,.rarity-row,.stat,.skin-card,.chain-badge,.features-title').forEach(el=>{el.style.opacity='0';el.style.transform='translateY(16px)';el.style.transition='opacity 0.5s, transform 0.5s';obs.observe(el)});
 
-// Scroll to playtest section on click
-document.querySelectorAll('a[href="#playtest"]').forEach(a=>{
-  a.addEventListener('click',e=>{
-    e.preventDefault();
-    const target=document.getElementById('playtest');
-    if(target)target.scrollIntoView({behavior:'smooth',block:'center'});
-  });
-});
-// Auto-scroll if URL has #beta
-if(location.hash==='#playtest'){
-  setTimeout(()=>{
-    const target=document.getElementById('playtest');
-    if(target)target.scrollIntoView({behavior:'smooth',block:'center'});
-  },500);
-}
-
-// ===== PLAYTEST ACCESS FLOW =====
-(function(){
-  const step1=document.getElementById('beta-step1');
-  const step2=document.getElementById('beta-step2');
-  const step3=document.getElementById('beta-step3');
-  const msg=document.getElementById('beta-msg');
-
-  // Check URL for session from Twitter OAuth callback
-  const params=new URLSearchParams(location.search);
-  const sessionParam=params.get('session');
-  if(sessionParam){
-    localStorage.setItem('hh_session',sessionParam);
-    // Clean URL
-    history.replaceState(null,'',location.pathname+location.hash);
-  }
-
-  const session=localStorage.getItem('hh_session');
-
-  if(!session){
-    // Not connected -- show step 1
-    return;
-  }
-
-  // Connected -- check if already has playtest access
-  fetch('/api/beta/check?session='+encodeURIComponent(session))
-    .then(r=>r.json())
-    .then(data=>{
-      // Always fetch username so it shows on both steps
-      fetch('/auth/me?token='+encodeURIComponent(session))
-        .then(r=>r.json())
-        .then(d=>{
-          if(d.user){
-            const u='@'+d.user.username;
-            document.getElementById('beta-username').textContent=u;
-            document.getElementById('beta-username-3').textContent=u;
-          }
-        });
-      if(data.access){
-        // Already has access
-        step1.style.display='none';
-        step3.style.display='block';
-        setPlayLink(session);
-      }else{
-        // Connected but no access -- show code input
-        step1.style.display='none';
-        step2.style.display='block';
-      }
-    })
-    .catch(()=>{
-      // API error, show connect anyway
-    });
-
-  // Helper: build play URL with session for cross-subdomain handoff
-  function setPlayLink(sess){
-    const links=document.querySelectorAll('#beta-step3 a.btn-primary');
-    links.forEach(a=>{
-      a.href='https://play.hoppingheads.fun/game?session='+encodeURIComponent(sess);
-    });
-  }
-
-  // Disconnect handlers
-  function disconnectX(){
-    if(!confirm('Disconnect X account?'))return;
-    localStorage.removeItem('hh_session');
-    location.reload();
-  }
-  document.getElementById('beta-disconnect-2')?.addEventListener('click',disconnectX);
-  document.getElementById('beta-disconnect-3')?.addEventListener('click',disconnectX);
-
-  // Redeem button
-  const redeemBtn=document.getElementById('beta-redeem');
-  const codeInput=document.getElementById('beta-code-input');
-
-  if(redeemBtn)redeemBtn.addEventListener('click',async()=>{
-    const code=codeInput.value.trim();
-    if(!code){msg.textContent='Enter a code';msg.className='beta-msg error';return}
-    window.hhTrack&&window.hhTrack('code_redeem_attempt');
-    redeemBtn.textContent='...';
-    redeemBtn.disabled=true;
-
-    try{
-      const res=await fetch('/api/beta/redeem',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({code,session})
-      });
-      const data=await res.json();
-
-      if(data.success){
-        window.hhTrack&&window.hhTrack('code_redeem_success');
-        step2.style.display='none';
-        step3.style.display='block';
-        setPlayLink(session);
-      }else{
-        msg.textContent=data.error||'Invalid code';
-        msg.className='beta-msg error';
-        redeemBtn.textContent='REDEEM';
-        redeemBtn.disabled=false;
-      }
-    }catch(err){
-      msg.textContent='Network error';
-      msg.className='beta-msg error';
-      redeemBtn.textContent='REDEEM';
-      redeemBtn.disabled=false;
-    }
-  });
-
-  // Enter key on input
-  if(codeInput)codeInput.addEventListener('keydown',e=>{
-    if(e.key==='Enter')redeemBtn.click();
-  });
-
-  // Auto-uppercase input
-  if(codeInput)codeInput.addEventListener('input',()=>{
-    codeInput.value=codeInput.value.toUpperCase();
-  });
-})();
 </script>
 </body>
 </html>

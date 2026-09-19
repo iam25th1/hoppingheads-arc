@@ -1,21 +1,11 @@
 #!/bin/sh
-# Refuses the push if:
-#   (1) client/index.html and server/public/index.html are out of sync
-#   (2) eslint finds bug-class errors
+# Refuses the push if the gate is red: typecheck, lint, test, build.
 # Install: npm run install-hooks
 set -e
 
-if ! npm run --silent check-sync; then
+if ! npm run --silent gate; then
   echo ""
-  echo "  client and server copies of index.html are out of sync."
-  echo "  run:  npm run sync"
-  echo "  then: git add server/public/index.html && git commit --amend --no-edit"
-  exit 1
-fi
-
-if ! npm run --silent lint; then
-  echo ""
-  echo "  lint found bug-class errors. fix them before pushing."
-  echo "  run:  npm run lint"
+  echo "  gate is red. fix it before pushing."
+  echo "  run:  npm run gate"
   exit 1
 fi

@@ -31,16 +31,11 @@ try {
 if (fs.existsSync(TMP)) fs.rmSync(TMP, { recursive: true });
 fs.mkdirSync(TMP, { recursive: true });
 
-// NOTE: server/public/index.html is a mirror of client/index.html maintained by
-// `npm run sync` and `npm run check-sync` - no need to lint it twice.
+// The game client is the one file under client/. The landing page is the
+// only other HTML with inline script worth linting.
 const htmlFiles = [
   'client/index.html',
-  'server/public/metrics.html',
   'server/landing/index.html',
-  'server/landing/store.html',
-  'server/landing/store-admin.html',
-  'server/landing/workshop.html',
-  'server/landing/admin.html',
 ];
 
 const SCRIPT_RE = /<script([^>]*)>([\s\S]*?)<\/script>/g;
