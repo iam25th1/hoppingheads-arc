@@ -4,8 +4,13 @@
  */
 
 import crypto from "crypto";
+import { createRequire } from "module";
 import { query } from "../db/pool.js";
 import { issueRound } from "../game/rounds.js";
+import { createFragState, createRejections, tryCollect, respawnRarity, FRAG_POINTS } from "../game/lobbyFrags.js";
+
+const require = createRequire(import.meta.url);
+const layoutModule = require("../../../shared/layout.cjs");
 import { verifySessionToken, shortAddress } from "../utils/walletAuth.js";
 
 const TICK_RATE = 100;
@@ -152,6 +157,7 @@ export function initGameSocket(io) {
         lastPosTime: Date.now(), lastX:0, lastZ:0,
         fragCount:0, maxFrags:48, shadow:0,
         maxMints:5, boinkCd:0,
+        rejections: createRejections(), // per reason tally of refused claims, logged at round end
       });
 
       currentLobby = lobby;
@@ -248,27 +254,34 @@ export function initGameSocket(io) {
       p.lastPosTime = now;
     });
 
-    socket.on('frag:collected', ({ rarity, score }) => {
+    socket.on('frag:collected', ({ id }) => {
       if (!currentLobby || !playerId) return;
       if (!fragLimiter()) return;
 
       const p = currentLobby.players.get(playerId);
       if (!p) return;
+      if (!currentLobby.frags) return; // round not started
 
-      // Validate rarity
-      const r = clampNum(rarity, 0, 4);
-      if (r !== Math.floor(r)) return;
-
-      // Cap fragment count (can't collect more than exist on map)
+      // Second layer, as before: no more fragments than exist on the map
       if (p.fragCount >= p.maxFrags) return;
-      p.fragments[r]++;
+
+      // The server decides. The fragment must exist, be unclaimed, and the
+      // player's server tracked position must be within COLLECT_RANGE of its
+      // authoritative position (lobbyFrags.js). Reject, never clamp, and
+      // tally it: an invisible failed cheat is no use to phase 5.
+      const r = tryCollect(currentLobby.frags, playerId, p, id, p.rejections);
+      if (!r.ok) {
+        console.warn(`[MP] REJECT frag:collected ${playerId} ${r.reason}${r.id !== undefined ? ` id=${r.id}` : ''}${r.dist !== undefined ? ` dist=${r.dist.toFixed(1)}` : ''} total=${p.rejections.total}`);
+        socket.emit('frag:rejected', { id, reason: r.reason });
+        return;
+      }
+      const f = r.fragment;
+      p.fragments[f.rarity]++;
       p.fragCount++;
+      p.score += FRAG_POINTS;
 
-      // Server calculates score, don't trust client
-      const PTS = [3, 3, 3, 3, 3]; // all frags worth 3 pts
-      p.score += PTS[r];
-
-      socket.to(`lobby:${currentLobby.id}`).emit('frag:taken', { id:playerId, rarity:r, score:p.score });
+      // Everyone, the collector included: the fragment is gone for all
+      io.to(`lobby:${currentLobby.id}`).emit('frag:taken', { id: f.id, by: playerId, rarity: f.rarity, score: p.score });
     });
 
     socket.on('mint:done', ({ rarity, score }) => {
@@ -290,6 +303,13 @@ export function initGameSocket(io) {
       p.score += MINT_PTS[r];
 
       io.to(`lobby:${currentLobby.id}`).emit('mint:broadcast', { id:playerId, rarity:r, minted:p.minted, score:p.score });
+
+      // A mint respawns that rarity for everyone, from the round's layout
+      // stream, so every client keeps the same layout after it.
+      if (currentLobby.frags) {
+        const moved = respawnRarity(currentLobby.frags, r);
+        io.to(`lobby:${currentLobby.id}`).emit('frag:respawn', { rarity: r, fragments: moved });
+      }
     });
 
     socket.on('boink', ({ target, myFrags }) => {
@@ -374,6 +394,9 @@ async function startRound(io, lobby) {
   const round = await issueRound({ mode: 'multiplayer', mapIndex: lobby.mapIndex, maxPlayers: MAX_PLAYERS, durationSecs: ROUND_DURATION });
   lobby.seed = round.seed;
   lobby.roundId = round.id;
+  // The lobby holds the fragment state for the round, built from the same
+  // shared module the client uses, so both sides agree on every position.
+  lobby.frags = createFragState(layoutModule.createLayout(lobby.seed, lobby.mapIndex));
 
   lobby.status = 'active';
   lobby.startTime = Date.now();
@@ -421,6 +444,12 @@ function endRound(io, lobby) {
       fragments:p.fragments.reduce((a,b)=>a+b,0) }))
     .sort((a, b) => b.score - a.score)
     .map((r, i) => ({ ...r, placement:i+1 }));
+
+  // Refused claims per player. Zero for honest clients; anything else is
+  // the trail phase 5 reads.
+  for (const p of lobby.players.values()) {
+    if (p.rejections.total > 0) console.warn(`[MP] Rejections lobby ${lobby.id} ${p.id}: ${JSON.stringify(p.rejections)}`);
+  }
 
   // Emit the public result fields only
   io.to(`lobby:${lobby.id}`).emit('round:end', { results: results.map(r => ({
