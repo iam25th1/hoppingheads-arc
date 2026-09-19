@@ -3,7 +3,15 @@
  * Security: input validation, rate limiting, anti-cheat, XSS prevention
  */
 
+import crypto from "crypto";
+import { createRequire } from "module";
 import { query } from "../db/pool.js";
+import { issueRound } from "../game/rounds.js";
+import { createFragState, createRejections, tryCollect, respawnRarity, FRAG_POINTS, createMintState, noteCollect, tryMint, MINT_LIMIT } from "../game/lobbyFrags.js";
+import { lobbyModeFor, rulesFor } from "../game/modes.js";
+
+const require = createRequire(import.meta.url);
+const layoutModule = require("../../../shared/layout.cjs");
 import { verifySessionToken, shortAddress } from "../utils/walletAuth.js";
 
 const TICK_RATE = 100;
@@ -63,12 +71,12 @@ function clampNum(val, min, max) {
 const lobbies = new Map();
 let nextLobbyId = 1;
 
-function createLobby() {
+function createLobby(mode) {
   const id = nextLobbyId++;
   const lobby = {
-    id, status:'waiting', players:new Map(),
-    mapIndex: Math.floor(Math.random() * 6),
-    mapSeed: Math.random().toString(36).slice(2, 10),
+    id, mode, rules: rulesFor(mode), status:'waiting', players:new Map(),
+    mapIndex: crypto.randomInt(6),
+    seed: null, roundId: null, // issued by the server at round start
     startTime:null, endTime:null,
     tickInterval:null, countdownInterval:null, autoStartTimer:null,
     waitStartedAt:null, waitTickInterval:null,
@@ -78,9 +86,9 @@ function createLobby() {
   return lobby;
 }
 
-function findOpenLobby() {
+function findOpenLobby(mode) {
   for (const [id, lobby] of lobbies) {
-    if (lobby.status === 'waiting' && lobby.players.size < MAX_PLAYERS) return lobby;
+    if (lobby.mode === mode && lobby.status === 'waiting' && lobby.players.size < MAX_PLAYERS) return lobby;
   }
   return null;
 }
@@ -98,7 +106,7 @@ export function initGameSocket(io) {
     const mintLimiter = createRateLimiter(1);  // 1 mint/sec max
     const boinkLimiter = createRateLimiter(2); // 2 boinks/sec max
 
-    socket.on('quickmatch', async ({ name, skin, session }) => {
+    socket.on('quickmatch', async ({ name, skin, session, mode }) => {
       // Prevent double-join
       if (hasJoined) return;
 
@@ -122,8 +130,10 @@ export function initGameSocket(io) {
       const pName = shortAddress(address);
       playerId = address;
 
-      let lobby = findOpenLobby();
-      if (!lobby) lobby = createLobby();
+      // Lobbies are per mode. The server selects the ruleset; the client only asks.
+      const lobbyMode = lobbyModeFor(mode);
+      let lobby = findOpenLobby(lobbyMode);
+      if (!lobby) lobby = createLobby(lobbyMode);
 
       const playerIndex = lobby.players.size;
 
@@ -149,15 +159,18 @@ export function initGameSocket(io) {
         appearance, cosmeticExtras, index: playerIndex,
         lastPosTime: Date.now(), lastX:0, lastZ:0,
         fragCount:0, maxFrags:48, shadow:0,
-        maxMints:5, boinkCd:0,
+        maxMints:MINT_LIMIT, boinkCd:0,
+        mint: createMintState(), // chests earned from validated collections; the only mint record
+        rejections: createRejections(), // per reason tally of refused claims, logged at round end
+        violations: { move: 0 }, // movement clamps, same idea: clamp for latency, count for phase 5
       });
 
       currentLobby = lobby;
       socket.join(`lobby:${lobby.id}`);
 
       socket.emit('joined', {
-        playerId, lobbyId: lobby.id,
-        mapSeed: lobby.mapSeed, mapIndex: lobby.mapIndex,
+        playerId, lobbyId: lobby.id, mode: lobby.mode,
+        mapIndex: lobby.mapIndex,
         appearance, cosmeticExtras,
         players: Array.from(lobby.players.values()).map(p => ({
           id:p.id, name:p.name, appearance:p.appearance, extras:p.cosmeticExtras,
@@ -229,7 +242,14 @@ export function initGameSocket(io) {
       const maxDist = adjustedMaxSpeed * elapsed + 2; // +2 margin for knockback
 
       if (dist > maxDist && p.lastPosTime > 0) {
-        // Suspicious movement, clamp
+        // Suspicious movement. Still clamp, so a latency spike does not eject
+        // an honest player, but count it and log it: a slow continuous
+        // cheater must not be invisible. No ejection yet. Logged on the first
+        // three and every fiftieth after, so a real cheat cannot flood the log.
+        p.violations.move++;
+        if (p.violations.move <= 3 || p.violations.move % 50 === 0) {
+          console.warn(`[MP] FLAG pos ${playerId} moved ${dist.toFixed(1)} max ${maxDist.toFixed(1)} in ${Math.round(elapsed * 1000)}ms (count ${p.violations.move})`);
+        }
         const ratio = maxDist / dist;
         p.x = p.lastX + dx * ratio;
         p.z = p.lastZ + dz * ratio;
@@ -246,48 +266,78 @@ export function initGameSocket(io) {
       p.lastPosTime = now;
     });
 
-    socket.on('frag:collected', ({ rarity, score }) => {
+    socket.on('frag:collected', ({ id }) => {
       if (!currentLobby || !playerId) return;
       if (!fragLimiter()) return;
 
       const p = currentLobby.players.get(playerId);
       if (!p) return;
+      if (!currentLobby.rules.fragments) {
+        p.rejections.total++; p.rejections.wrong_mode = (p.rejections.wrong_mode || 0) + 1;
+        console.warn(`[MP] REJECT frag:collected ${playerId} wrong_mode lobby=${currentLobby.mode} total=${p.rejections.total}`);
+        socket.emit('frag:rejected', { id, reason: 'wrong_mode' });
+        return;
+      }
+      if (!currentLobby.frags) return; // round not started
 
-      // Validate rarity
-      const r = clampNum(rarity, 0, 4);
-      if (r !== Math.floor(r)) return;
-
-      // Cap fragment count (can't collect more than exist on map)
+      // Second layer, as before: no more fragments than exist on the map
       if (p.fragCount >= p.maxFrags) return;
-      p.fragments[r]++;
+
+      // The server decides. The fragment must exist, be unclaimed, and the
+      // player's server tracked position must be within COLLECT_RANGE of its
+      // authoritative position (lobbyFrags.js). Reject, never clamp, and
+      // tally it: an invisible failed cheat is no use to phase 5.
+      const r = tryCollect(currentLobby.frags, playerId, p, id, p.rejections);
+      if (!r.ok) {
+        console.warn(`[MP] REJECT frag:collected ${playerId} ${r.reason}${r.id !== undefined ? ` id=${r.id}` : ''}${r.dist !== undefined ? ` dist=${r.dist.toFixed(1)}` : ''} total=${p.rejections.total}`);
+        socket.emit('frag:rejected', { id, reason: r.reason });
+        return;
+      }
+      const f = r.fragment;
+      p.fragments[f.rarity]++;
       p.fragCount++;
+      p.score += FRAG_POINTS;
+      noteCollect(p.mint, f.rarity, Date.now()); // three of a rarity earn a chest, server side
 
-      // Server calculates score, don't trust client
-      const PTS = [3, 3, 3, 3, 3]; // all frags worth 3 pts
-      p.score += PTS[r];
-
-      socket.to(`lobby:${currentLobby.id}`).emit('frag:taken', { id:playerId, rarity:r, score:p.score });
+      // Everyone, the collector included: the fragment is gone for all
+      io.to(`lobby:${currentLobby.id}`).emit('frag:taken', { id: f.id, by: playerId, rarity: f.rarity, score: p.score });
     });
 
-    socket.on('mint:done', ({ rarity, score }) => {
+    socket.on('mint:done', () => {
       if (!currentLobby || !playerId) return;
       if (!mintLimiter()) return;
 
       const p = currentLobby.players.get(playerId);
       if (!p) return;
+      if (!currentLobby.rules.mints) {
+        p.rejections.total++; p.rejections.wrong_mode = (p.rejections.wrong_mode || 0) + 1;
+        console.warn(`[MP] REJECT mint:done ${playerId} wrong_mode lobby=${currentLobby.mode} total=${p.rejections.total}`);
+        socket.emit('mint:rejected', { reason: 'wrong_mode' });
+        return;
+      }
 
-      // Cap mints
-      if (p.minted >= p.maxMints) return;
-
-      const r = clampNum(rarity, 0, 4);
-      if (r !== Math.floor(r)) return;
-
-      p.minted++;
-      // Server calculates mint score
-      const MINT_PTS = [10, 25, 50, 100, 250];
-      p.score += MINT_PTS[r];
+      // The payload is not read. Which chest is minted, and so its rarity and
+      // points, comes from the server's own record of this player's validated
+      // collections (lobbyFrags.js). No chest, too early, or over the cap:
+      // reject and tally.
+      const m = tryMint(p.mint, Date.now(), p.rejections);
+      if (!m.ok) {
+        console.warn(`[MP] REJECT mint:done ${playerId} ${m.reason}${m.rarity !== undefined ? ` rarity=${m.rarity} elapsed=${m.elapsed}` : ''} total=${p.rejections.total}`);
+        socket.emit('mint:rejected', { reason: m.reason });
+        return;
+      }
+      const r = m.rarity;
+      p.minted = m.minted;
+      p.score += m.points;
 
       io.to(`lobby:${currentLobby.id}`).emit('mint:broadcast', { id:playerId, rarity:r, minted:p.minted, score:p.score });
+
+      // A mint respawns that rarity for everyone, from the round's layout
+      // stream, so every client keeps the same layout after it.
+      if (currentLobby.frags) {
+        const moved = respawnRarity(currentLobby.frags, r);
+        io.to(`lobby:${currentLobby.id}`).emit('frag:respawn', { rarity: r, fragments: moved });
+      }
     });
 
     socket.on('boink', ({ target, myFrags }) => {
@@ -360,22 +410,33 @@ function beginCountdown(io, lobby) {
       io.to(`lobby:${lobby.id}`).emit('countdown', { count });
     } else {
       clearInterval(lobby.countdownInterval);
-      startRound(io, lobby);
+      startRound(io, lobby).catch((e) => console.error('[MP] Round start failed:', e.message));
     }
   }, 1000);
 }
 
-function startRound(io, lobby) {
+async function startRound(io, lobby) {
+  // The seed is issued here, on the server, and written to the round row
+  // before any client sees it. The client builds the fragment layout from
+  // exactly what this emits, through the same shared module the lobby uses.
+  const round = await issueRound({ mode: lobby.rules.roundMode, mapIndex: lobby.mapIndex, maxPlayers: MAX_PLAYERS, durationSecs: ROUND_DURATION });
+  lobby.seed = round.seed;
+  lobby.roundId = round.id;
+  // The lobby holds the fragment state for the round, built from the same
+  // shared module the client uses, so both sides agree on every position.
+  // A mode without fragments holds none, and any claim is wrong_mode.
+  lobby.frags = lobby.rules.fragments ? createFragState(layoutModule.createLayout(lobby.seed, lobby.mapIndex)) : null;
+
   lobby.status = 'active';
   lobby.startTime = Date.now();
   lobby.endTime = lobby.startTime + ROUND_DURATION * 1000;
 
   io.to(`lobby:${lobby.id}`).emit('round:start', {
     duration:ROUND_DURATION, endTime:lobby.endTime,
-    mapSeed:lobby.mapSeed, mapIndex:lobby.mapIndex,
+    seed:lobby.seed, mapIndex:lobby.mapIndex, mode:lobby.mode,
   });
 
-  console.log(`[MP] Round started lobby ${lobby.id} (${lobby.players.size} players)`);
+  console.log(`[MP] Round started lobby ${lobby.id} mode=${lobby.mode} (${lobby.players.size} players)`);
 
   lobby.tickInterval = setInterval(() => {
     if (lobby.status !== 'active') { clearInterval(lobby.tickInterval); return; }
@@ -413,6 +474,14 @@ function endRound(io, lobby) {
     .sort((a, b) => b.score - a.score)
     .map((r, i) => ({ ...r, placement:i+1 }));
 
+  // Refused claims and movement flags per player. Zero for honest clients;
+  // anything else is the trail phase 5 reads.
+  for (const p of lobby.players.values()) {
+    if (p.rejections.total > 0 || p.violations.move > 0) {
+      console.warn(`[MP] Flags lobby ${lobby.id} ${p.id}: rejections=${JSON.stringify(p.rejections)} moveClamps=${p.violations.move}`);
+    }
+  }
+
   // Emit the public result fields only
   io.to(`lobby:${lobby.id}`).emit('round:end', { results: results.map(r => ({
     id:r.id, name:r.name, score:r.score, minted:r.minted, fragments:r.fragments, placement:r.placement
@@ -424,15 +493,24 @@ function endRound(io, lobby) {
 }
 
 async function saveResults(results, lobby) {
-  // One rounds row per match. seed is the lobby map seed for now; phase 1
-  // replaces it with the run seed. commit_hash, signature and tx_hash stay
-  // null until phases 2 and 3.
-  const round = await query(
-    `INSERT INTO rounds (mode, map_index, seed, status, max_players, duration_secs, start_time, end_time, winner)
-     VALUES ('multiplayer', $1, $2, 'completed', $3, $4, to_timestamp($5 / 1000.0), to_timestamp($6 / 1000.0), $7) RETURNING id`,
-    [lobby.mapIndex, lobby.mapSeed, MAX_PLAYERS, ROUND_DURATION, lobby.startTime, lobby.endTime, results[0]?.id ?? null]
-  );
-  const roundId = round.rows[0].id;
+  // The rounds row was written when the seed was issued at round start.
+  // Close it here. commit_hash, signature and tx_hash stay null until
+  // phases 2 and 3. If the row could not be written then (database down at
+  // issue time), write it now so the seed is never lost.
+  let roundId = lobby.roundId;
+  if (roundId) {
+    await query(
+      `UPDATE rounds SET status = 'completed', end_time = to_timestamp($2 / 1000.0), winner = $3 WHERE id = $1`,
+      [roundId, lobby.endTime, results[0]?.id ?? null]
+    );
+  } else {
+    const round = await query(
+      `INSERT INTO rounds (mode, map_index, seed, status, max_players, duration_secs, start_time, end_time, winner)
+       VALUES ($8, $1, $2, 'completed', $3, $4, to_timestamp($5 / 1000.0), to_timestamp($6 / 1000.0), $7) RETURNING id`,
+      [lobby.mapIndex, lobby.seed, MAX_PLAYERS, ROUND_DURATION, lobby.startTime, lobby.endTime, results[0]?.id ?? null, lobby.rules.roundMode]
+    );
+    roundId = round.rows[0].id;
+  }
   for (const r of results) {
     // r.id is the recovered address. Every seat written here is human;
     // a bot seat would carry a bot id and is_bot true (see game/ids.js).

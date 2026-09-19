@@ -27,6 +27,9 @@ const SERVED = [
   'server/landing/privacy.html',
   'server/landing/favicon.png',
   'server/landing/og-banner.png',
+  'shared/prng.cjs',
+  'shared/layout.cjs',
+  'shared/mapObstacles.cjs',
 ];
 for (const rel of SERVED) {
   if (!fs.existsSync(path.join(ROOT, rel))) failures.push(`missing served file: ${rel}`);

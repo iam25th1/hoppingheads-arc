@@ -558,6 +558,10 @@ body.in-menu .mob-util-btn{display:none}
 
 <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<!-- Shared with the server: the same files it requires, served as classic scripts -->
+<script src="/game/lib/prng.js"></script>
+<script src="/game/lib/mapObstacles.js"></script>
+<script src="/game/lib/layout.js"></script>
 <script>
 const{Scene,PerspectiveCamera,WebGLRenderer,Color,FogExp2,AmbientLight,DirectionalLight,HemisphereLight,PointLight,
 BoxGeometry,SphereGeometry,CylinderGeometry,PlaneGeometry,ConeGeometry,DodecahedronGeometry,IcosahedronGeometry,OctahedronGeometry,TorusGeometry,CircleGeometry,
@@ -572,6 +576,9 @@ const R_HEX=[0x4a9ebb,0x5cc06a,0x8a5acc,0xdd5588,0xdda830],R_LBL=["COMMON","UNCO
 const SKIN_C=[0xff8866,0xaadd55,0xaa88dd,0x88bbcc,0xddcc55,0xff99bb,0x66ccaa],EYE_S=["X","Dots","Slit","Open"];
 function m32(s){s=s|0;return()=>{s=(s+0x6d2b79f5)|0;let t=Math.imul(s^(s>>>15),1|s);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296}}
 let rng=m32(0xf7a2c1de);
+// Decorations rebuild from this fixed stream on every map build, so the collider set of
+// a map is the same on every client and every rebuild. Gameplay draws keep their own stream.
+const MAP_DECOR_SEED=0xf7a2c1de;
 const _matCache=new Map();
 function cM(c){if(_matCache.has(c))return _matCache.get(c);const m=new MeshPhongMaterial({color:c,flatShading:true,shininess:8});_matCache.set(c,m);return m}
 // Shared blob materials
@@ -2167,7 +2174,7 @@ function switchMapInPlace(newIdx){
   stopAmbient();
   clearWorld();
   // Build new map
-  MAP_BUILDERS[mapIdx]();
+  {const gameplayRng=rng;rng=m32(MAP_DECOR_SEED);MAP_BUILDERS[mapIdx]();rng=gameplayRng}
   // Boundary colliders
   // Boundary ring removed - player movement uses MAP/2 hard clamp instead.
   // The ring was creating invisible walls inside the playable area.
@@ -2182,13 +2189,9 @@ function switchMapInPlace(newIdx){
     e._eliminated=false;e._health=MAX_HEALTH;
     scene.add(e);
   }
-  // Regenerate fragment positions
-  for(var fi=0;fi<fragments.length;fi++){
-    var f=fragments[fi];var pos=safePosInMap(0.38);
-    f.x=pos.x;f.z=pos.z;f.mesh.position.set(pos.x,0,pos.z);
-    f.collected=false;f.discovered=false;f.mesh.visible=false;
-    scene.add(f.mesh);
-  }
+  // Fragment positions from the shared layout (placeholder seed until round start issues one)
+  // A rebuild of the map a round is already playing on keeps that round's layout.
+  applyLayout(currentLayout&&currentLayout.mapIndex===mapIdx?currentLayout:HHLayout.createLayout(SOLO_PLACEHOLDER_SEED,mapIdx));
   // Rebuild arcade cabinet
   if(arcadeCab){arcadeCab=null}
   arcadeCab=buildArcadeCab();arcadeCab.position.set(0,0,0);scene.add(arcadeCab);
@@ -2531,7 +2534,7 @@ const MAP_NAMES=["MEDIEVAL VILLAGE","DESERT OASIS","FROZEN TUNDRA","TROPICAL ISL
 const MAP_BUILDERS=[buildMedieval,buildDesert,buildFrozen,buildTropical,buildHaunted,buildCrystal];
 const _urlMap=new URLSearchParams(location.search).get('map');
 let mapIdx=_urlMap!==null?parseInt(_urlMap):Math.floor(Math.random()*6);
-MAP_BUILDERS[mapIdx]();
+{const gameplayRng=rng;rng=m32(MAP_DECOR_SEED);MAP_BUILDERS[mapIdx]();rng=gameplayRng}
 // Universal boundary ring - invisible colliders at map edge
 // Per-map playable radius (some maps have walls, this catches the rest)
 // Boundary ring was confining players to ~20% of the map. Push to near the true
@@ -2627,7 +2630,23 @@ function safePosInMap(range){
   return{x:(rng()-0.5)*MAP*0.2,z:(rng()-0.5)*MAP*0.2};
 }
 const fragments=[];const FRAG_N=[30,18,12,7,4];
-for(let r=0;r<5;r++){for(let i=0;i<FRAG_N[r];i++){const fg=new Group();const color=R_HEX[r];const fm=new MeshPhongMaterial({color,emissive:color,emissiveIntensity:0.35,flatShading:true,transparent:true,opacity:0.85});fg.add(new Mesh(new ConeGeometry(0.35,0.55,4),fm));fg.children[0].position.y=0.55;const bot=new Mesh(new ConeGeometry(0.35,0.35,4),fm);bot.rotation.x=Math.PI;bot.position.y=0.15;fg.add(bot);const pos=safePosInMap(0.38);fg.position.set(pos.x,0,pos.z);fg.visible=false;scene.add(fg);fragments.push({mesh:fg,rarity:r,x:pos.x,z:pos.z,collected:false,discovered:false})}}
+for(let r=0;r<5;r++){for(let i=0;i<FRAG_N[r];i++){const fg=new Group();const color=R_HEX[r];const fm=new MeshPhongMaterial({color,emissive:color,emissiveIntensity:0.35,flatShading:true,transparent:true,opacity:0.85});fg.add(new Mesh(new ConeGeometry(0.35,0.55,4),fm));fg.children[0].position.y=0.55;const bot=new Mesh(new ConeGeometry(0.35,0.35,4),fm);bot.rotation.x=Math.PI;bot.position.y=0.15;fg.add(bot);fg.position.set(0,0,0);fg.visible=false;scene.add(fg);fragments.push({id:fragments.length,mesh:fg,rarity:r,x:0,z:0,collected:false,discovered:false})}}
+// Fragment positions come from the shared layout module (shared/layout.cjs, served at
+// /game/lib/layout.js), never from safePosInMap. The server computes the same layout from
+// the same file, so both sides agree byte for byte. fragments[i] is layout fragment id i:
+// both are built rarity-major over FRAG_N.
+let currentLayout=null;
+// Stands in for the server issued seed until the next commit wires round start.
+const SOLO_PLACEHOLDER_SEED="0x"+"f7a2c1de".repeat(8);
+function placeFragment(f,lf){f.x=lf.x;f.z=lf.z;f.mesh.position.set(lf.x,0,lf.z);f.collected=false;f.discovered=false;f.mesh.visible=false;if(!f.mesh.parent)scene.add(f.mesh)}
+function applyLayout(layout){currentLayout=layout;for(const lf of layout.fragments){const f=fragments[lf.id];if(f)placeFragment(f,lf)}}
+function applyRespawn(moved){for(const lf of moved){const f=fragments[lf.id];if(f)placeFragment(f,lf)}}
+// Solo round issued by the server: {id, seed, mapIndex, mode}. id is null for guests.
+let soloRound=null,pendingSoloRound=false,currentRoundId=null,currentRoundKey=null;
+function requestSoloRound(){
+  const headers={'Content-Type':'application/json'};if(walletSession)headers['x-session']=walletSession;
+  return fetch('/api/round/start',{method:'POST',headers,body:JSON.stringify({mode:gameMode==='lbs'?'lbs-solo':'classic-solo',mapIndex:mapIdx})}).then(r=>r.ok?r.json():null);
+}
 const unlockedNFTs=[];
 function spawnNFT(rarity){
   const color=R_HEX[rarity];
@@ -3067,7 +3086,8 @@ function tryBoink(){
           }
         }
         updateHud();
-        if(socket&&mpConnected)socket.emit('frag:collected',{rarity:0,score});
+        // Stolen fragments are client only entities. The server holds no record of them, so
+        // they are not reported and do not score online. Local score still moves.
         break;
       }
     }
@@ -5393,12 +5413,23 @@ async function fetchLeaderboard(){
 function startGame(){
   
   if(gamePhase!=='title')return;
+  // Solo rounds get their seed from the server, through the same path a lobby round does.
+  // Ask once, then re-enter with soloRound set.
+  if(gameMode!=='multiplayer'&&!soloRound){
+    if(pendingSoloRound)return;
+    pendingSoloRound=true;
+    requestSoloRound().then(r=>{pendingSoloRound=false;if(!r){alert('Could not start the round. Is the server up?');return}soloRound=r;startGame()}).catch(()=>{pendingSoloRound=false;alert('Could not start the round. Is the server up?')});
+    return;
+  }
   // Build the map if we're still on the menu arcade scene. Classic mode path
   // previously skipped switchMapInPlace entirely, causing no map/npcs to render.
   if(!window._mapBuilt){
     switchMapInPlace(mapIdx);
     window._mapBuilt=true;
   }
+  // The solo seed arrived from the server (requestSoloRound). Apply it now, before any
+  // mode setup, so the fragment layout is the server issued one and not the placeholder.
+  if(soloRound){if(soloRound.mapIndex!==mapIdx)switchMapInPlace(soloRound.mapIndex);applyLayout(HHLayout.createLayout(soloRound.seed,soloRound.mapIndex));currentRoundId=soloRound.id;currentRoundKey=soloRound.key||null;soloRound=null}
   // LBS mode: hide all fragments, they don't exist in this mode
   if(gameMode==='lbs'){
     for(const f of fragments){f.collected=true;f.discovered=false;f.mesh.visible=false;if(f.mesh.parent)scene.remove(f.mesh)}
@@ -5534,9 +5565,12 @@ scene.remove(n.mesh);isMinting=false;currentMintNFT=null;document.getElementById
 healPlayer(HEALTH_REGEN_PER_HEAD);showFloat(`+${HEALTH_REGEN_PER_HEAD} HP!`,0x5cc06a,player.position.clone());
 // Respawn fragments of this rarity so player can recollect
 fragCounts[n.rarity]=0;
-for(const f of fragments){if(f.rarity===n.rarity){f.collected=false;f.discovered=false;f.mesh.visible=false;const pos=safePosInMap(0.38);f.x=pos.x;f.z=pos.z;f.mesh.position.set(pos.x,0,pos.z);if(!f.mesh.parent)scene.add(f.mesh)}}
+// Respawn positions come from the layout stream, the same one the server holds.
+// Online the server broadcasts frag:respawn. Solo asks the server for the same thing: the client never
+// places a fragment itself, in either path.
+if(!(socket&&mpConnected)&&currentRoundKey){fetch('/api/round/respawn',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:currentRoundKey,rarity:n.rarity})}).then(r=>r.ok?r.json():null).then(d=>{if(d&&d.fragments)applyRespawn(d.fragments)}).catch(()=>{})}
 showFloat('FRAGMENTS RESPAWNED!',R_HEX[n.rarity],player.position.clone());
-updateHud();if(socket&&mpConnected)socket.emit('mint:done',{rarity:n.rarity,score});}
+updateHud();if(socket&&mpConnected)socket.emit('mint:done',{});}
 function useRadar(){
   if(radarPings<=0||lbsPlayerEliminated)return;
   radarPings--;sfxRadar();scanPulseTimer=5;scanPulseActive=true;
@@ -5566,7 +5600,8 @@ function useRadar(){
 // Submit classic mode score to server for leaderboard
 function submitClassicScore(sc,minted,frags){
   if(!walletSession)return; // guests are not on the leaderboard
-  fetch('/api/score',{method:'POST',headers:{'Content-Type':'application/json','x-session':walletSession},body:JSON.stringify({score:sc,minted:minted,fragments:frags,map_index:mapIdx})})
+  if(!currentRoundId)return; // no server issued round to score against
+  fetch('/api/score',{method:'POST',headers:{'Content-Type':'application/json','x-session':walletSession},body:JSON.stringify({round_id:currentRoundId,score:sc,minted:minted,fragments:frags})})
     .catch(()=>{})
 }
 // End screen visual state helper
@@ -5917,7 +5952,7 @@ function connectMultiplayer(){
     if(!hasJoined){
       hasJoined=true;
       const s=SKINS[selectedSkin];
-      socket.emit('quickmatch',{name:getPlayerName(),skin:{skinColor:s.color,eyeStyle:s.eyes,headStyle:s.head},session:walletSession});
+      socket.emit('quickmatch',{name:getPlayerName(),skin:{skinColor:s.color,eyeStyle:s.eyes,headStyle:s.head},session:walletSession,mode:gameMode==='lbs'?'lbs':'classic'});
     }
   });
   socket.on('auth:denied',(d)=>{
@@ -5998,6 +6033,8 @@ function connectMultiplayer(){
   });
   // Server round start
   socket.on('round:start',(d)=>{
+    // The server issued seed and map. Build the layout from them through the shared module.
+    if(d.seed&&typeof d.mapIndex==='number'){applyLayout(HHLayout.createLayout(d.seed,d.mapIndex))}
     document.getElementById('cd-text').textContent='GO!';
     document.getElementById('cd-text').style.color='#5cc06a';
     const el=document.getElementById('cd-text');el.style.animation='none';el.offsetHeight;el.style.animation='cdPop 0.6s ease-out';
@@ -6040,6 +6077,15 @@ function connectMultiplayer(){
     }
     for(const [id,rp] of remotePlayers){if(!seen.has(id)){scene.remove(rp.mesh);remotePlayers.delete(id)}}
   });
+  // The server owns fragment state. taken: gone for everyone (a no-op for the collector,
+  // who removed it optimistically). rejected: the optimistic collect was wrong; put it back
+  // and undo the local count and points. respawn: positions from the server's layout stream.
+  socket.on('frag:taken',(d)=>{const f=fragments[d.id];if(!f||f.collected)return;f.collected=true;if(f.mesh.parent)scene.remove(f.mesh)});
+  socket.on('frag:rejected',(d)=>{const f=fragments[d.id];if(!f)return;if(f.collected){f.collected=false;fragCounts[f.rarity]=Math.max(0,fragCounts[f.rarity]-1);score=Math.max(0,score-3);totalFragCount=getTotalFrags();f.mesh.visible=true;if(!f.mesh.parent)scene.add(f.mesh);updateHud()}showFloat('NOT COUNTED',0x6a6490,new Vector3(f.x,3,f.z))});
+  socket.on('frag:respawn',(d)=>{applyRespawn(d.fragments)});
+  // The server refused a mint (no chest on record, too early, or over the cap). The local
+  // mint already played out; the score that counts is the server's at round end.
+  socket.on('mint:rejected',(d)=>{showFloat('MINT NOT COUNTED',0x6a6490,player.position.clone());console.warn('[MP] mint rejected:',d.reason)});
   socket.on('mint:broadcast',(d)=>{
     const rp=remotePlayers.get(d.id);
     if(rp&&rp.mesh._skinMat){rp.mesh._skinMat.emissive.setHex(0xffd54f);rp.mesh._skinMat.emissiveIntensity=0.3;setTimeout(()=>{rp.mesh._skinMat.emissive.setHex(0);rp.mesh._skinMat.emissiveIntensity=0},500)}
@@ -6376,7 +6422,7 @@ function animate(){
 
   // Fragments (blocked during shadow form)
   if(!shadowActive){
-  for(const f of fragments){if(f.collected)continue;const dx=player.position.x-f.x,dz=player.position.z-f.z;const dist=Math.sqrt(dx*dx+dz*dz);const discR=activeEffects.magnet>0?DISC_R*3:DISC_R*1.5;if(!f.discovered&&dist<=discR){f.discovered=true;f.mesh.visible=true;f.mesh.scale.set(0.01,0.01,0.01);sfxDiscover()}if(f.discovered&&dist<5&&dist>3){const pull=0.12*(1-dist/5);f.mesh.position.x+=(dx/dist)*pull;f.mesh.position.z+=(dz/dist)*pull}if(f.discovered&&dist<=3){f.collected=true;scene.remove(f.mesh);fragCounts[f.rarity]++;healPlayer(HEALTH_REGEN_PER_FRAG);const feverBonus=isInFeverZone(f.x,f.z)?FEVER_MULTIPLIER:1;const pts=3*feverBonus;score+=pts;totalFragCount=getTotalFrags();const lbl=feverBonus>1?`+${R_LBL[f.rarity]} x${FEVER_MULTIPLIER}!`:`+${R_LBL[f.rarity]} FRAGMENT`;showFloat(lbl,feverBonus>1?0xffd54f:R_HEX[f.rarity],new Vector3(f.x,3,f.z));player._cFlash=0.3;player._skinMat.emissive.setHex(feverBonus>1?0xffd54f:R_HEX[f.rarity]);sfxCollect(f.rarity);if(fragCounts[f.rarity]===3){spawnNFT(f.rarity);showUnlock(`${R_LBL[f.rarity]} CHEST SPAWNED!`);sfxUnlock();}updateHud();if(socket&&mpConnected)socket.emit('frag:collected',{rarity:f.rarity,score});}}
+  for(const f of fragments){if(f.collected)continue;const dx=player.position.x-f.x,dz=player.position.z-f.z;const dist=Math.sqrt(dx*dx+dz*dz);const discR=activeEffects.magnet>0?DISC_R*3:DISC_R*1.5;if(!f.discovered&&dist<=discR){f.discovered=true;f.mesh.visible=true;f.mesh.scale.set(0.01,0.01,0.01);sfxDiscover()}if(f.discovered&&dist<5&&dist>3){const pull=0.12*(1-dist/5);f.mesh.position.x+=(dx/dist)*pull;f.mesh.position.z+=(dz/dist)*pull}if(f.discovered&&dist<=3){f.collected=true;scene.remove(f.mesh);fragCounts[f.rarity]++;healPlayer(HEALTH_REGEN_PER_FRAG);const feverBonus=isInFeverZone(f.x,f.z)?FEVER_MULTIPLIER:1;const pts=3*feverBonus;score+=pts;totalFragCount=getTotalFrags();const lbl=feverBonus>1?`+${R_LBL[f.rarity]} x${FEVER_MULTIPLIER}!`:`+${R_LBL[f.rarity]} FRAGMENT`;showFloat(lbl,feverBonus>1?0xffd54f:R_HEX[f.rarity],new Vector3(f.x,3,f.z));player._cFlash=0.3;player._skinMat.emissive.setHex(feverBonus>1?0xffd54f:R_HEX[f.rarity]);sfxCollect(f.rarity);if(fragCounts[f.rarity]===3){spawnNFT(f.rarity);showUnlock(`${R_LBL[f.rarity]} CHEST SPAWNED!`);sfxUnlock();}updateHud();if(socket&&mpConnected)socket.emit('frag:collected',{id:f.id});}}
   } // end shadow check
   for(const f of fragments){if(!f.discovered||f.collected)continue;f.mesh.rotation.y+=dt*2;f.mesh.position.y=0.8+Math.sin(el*2.5+f.x)*0.3;if(f.mesh.scale.x<0.99){const s=MathUtils.lerp(f.mesh.scale.x,1,dt*5);f.mesh.scale.set(s,s,s)}}
 
@@ -6420,7 +6466,7 @@ function animate(){
       sfxCollect(sf.rarity);
       if(fragCounts[sf.rarity]===3){spawnNFT(sf.rarity);showUnlock(`${R_LBL[sf.rarity]} CHEST SPAWNED!`);sfxUnlock()}
       updateHud();
-      if(socket&&mpConnected)socket.emit('frag:collected',{rarity:sf.rarity,score});
+      // Scattered fragments are client only entities, same as stolen ones: not reported.
     }
     // NPC collection of scattered fragments
     for(const e of enemies){

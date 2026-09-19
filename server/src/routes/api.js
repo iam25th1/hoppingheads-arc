@@ -2,6 +2,10 @@ import { Router } from "express";
 import { query } from "../db/pool.js";
 import { verifySessionToken, shortAddress } from "../utils/walletAuth.js";
 import { isHumanId } from "../game/ids.js";
+import { issueRound } from "../game/rounds.js";
+import { registerSoloRound, respawnSoloRound } from "../game/soloRounds.js";
+
+const SOLO_MODES = new Set(["classic-solo", "lbs-solo"]);
 
 const router = Router();
 
@@ -45,6 +49,40 @@ router.get("/leaderboard/recent", async (req, res) => {
 });
 
 // ---------------------------------------------------------------
+// Solo rounds: the seed comes from the server, same path as a lobby
+// ---------------------------------------------------------------
+
+// POST /api/round/start { mode, mapIndex } -> { id, seed, mapIndex, mode }
+// A signed in player gets a rounds row (issued_to = address) that /score
+// later closes. A guest gets a seed with no row and cannot score.
+router.post("/round/start", async (req, res) => {
+  const mode = req.body?.mode;
+  if (!SOLO_MODES.has(mode)) return res.status(400).json({ error: "Invalid mode" });
+  const address = verifySessionToken(req.get("x-session") || req.body?.session);
+  try {
+    const round = await issueRound({ mode, mapIndex: req.body?.mapIndex, issuedTo: address, persist: !!address });
+    // The server keeps this round's layout stream; the client never places a
+    // fragment itself. The key is what the client presents to advance it.
+    const key = registerSoloRound(round);
+    res.json({ ...round, key });
+  } catch (err) {
+    if (err.message === "solo_rounds_full") return res.status(429).json({ error: "Too many open rounds, try again shortly" });
+    console.error("[API] Round start error:", err.message);
+    res.status(500).json({ error: "Failed to start round" });
+  }
+});
+
+// POST /api/round/respawn { key, rarity } -> { rarity, fragments: [{id, rarity, x, z}] }
+// A solo mint respawns that rarity. The positions come from the server's
+// copy of the round's layout stream, the same call a lobby makes before it
+// broadcasts frag:respawn.
+router.post("/round/respawn", (req, res) => {
+  const moved = respawnSoloRound(req.body?.key, req.body?.rarity);
+  if (!moved) return res.status(404).json({ error: "Unknown round or rarity" });
+  res.json({ rarity: req.body.rarity, fragments: moved });
+});
+
+// ---------------------------------------------------------------
 // Classic mode score submission
 // ---------------------------------------------------------------
 
@@ -55,26 +93,36 @@ router.post("/score", async (req, res) => {
     if (!address) {
       return res.status(401).json({ error: "Sign in with a wallet to submit a score" });
     }
-    const { score, minted, fragments, map_index } = req.body;
-    if (typeof score !== "number") {
+    const { round_id, score, minted, fragments } = req.body;
+    if (!Number.isInteger(round_id) || typeof score !== "number") {
       return res.status(400).json({ error: "Invalid score data" });
     }
+
+    // The round must have been issued to this address by /round/start and
+    // still be open. Its seed and map are already on the row.
+    const found = await query("SELECT mode, issued_to, status FROM rounds WHERE id = $1", [round_id]);
+    const round = found.rows[0];
+    if (!round) return res.status(404).json({ error: "Unknown round" });
+    if (round.issued_to !== address) return res.status(403).json({ error: "Round was not issued to this wallet" });
+    if (round.mode !== "classic-solo") return res.status(400).json({ error: "This round mode does not score" });
+    if (round.status !== "active") return res.status(409).json({ error: "Round already closed" });
+
     const safeScore = Math.max(0, Math.min(99999, Math.floor(score)));
     const safeMinted = Math.max(0, Math.min(50, Math.floor(minted || 0)));
     const safeFrags = Math.max(0, Math.min(999, Math.floor(fragments || 0)));
-    const safeMap = Math.max(0, Math.min(5, Math.floor(map_index || 0)));
 
-    // One rounds row per solo run, one round_results row for the human seat.
-    // seed stays null until phase 1 makes solo runs seeded.
-    const round = await query(
-      `INSERT INTO rounds (mode, map_index, status, max_players, start_time, end_time)
-       VALUES ('classic-solo', $1, 'completed', 1, NOW(), NOW()) RETURNING id`,
-      [safeMap]
+    // Close the round. The status guard makes this atomic: two submissions
+    // racing for the same round get exactly one row through.
+    const closed = await query(
+      `UPDATE rounds SET status = 'completed', end_time = NOW(), winner = $2
+       WHERE id = $1 AND status = 'active' RETURNING id`,
+      [round_id, address]
     );
+    if (closed.rows.length === 0) return res.status(409).json({ error: "Round already closed" });
     await query(
       `INSERT INTO round_results (round_id, participant, is_bot, score, minted, fragments, placement)
        VALUES ($1, $2, false, $3, $4, $5, 1)`,
-      [round.rows[0].id, address, safeScore, safeMinted, safeFrags]
+      [round_id, address, safeScore, safeMinted, safeFrags]
     );
 
     // Upsert player_stats (cumulative), keyed by the full address
@@ -90,7 +138,7 @@ router.post("/score", async (req, res) => {
       [address, safeScore, safeScore >= 300 ? 1 : 0, safeMinted, safeScore]
     );
 
-    res.json({ ok: true });
+    res.json({ ok: true, round_id });
   } catch (err) {
     console.error("[API] Score submit error:", err.message);
     res.status(500).json({ error: "Failed to save score" });
