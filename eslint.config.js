@@ -64,8 +64,7 @@ export default [
     ignores: [
       'node_modules/**', 'artifacts/**', 'cache/**', 'typechain-types/**',
       '**/package-lock.json', 'server/package-lock.json',
-            'scripts/deploy.js', 'hardhat.config.js',
-    ],
+          ],
   },
   // Server code (Node/ESM)
   {

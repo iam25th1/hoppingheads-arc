@@ -9,7 +9,6 @@ import helmet from "helmet";
 
 import apiRoutes from "./routes/api.js";
 import { initDb } from "./db/pool.js";
-import { initContracts } from "./services/contractService.js";
 import { initGameSocket } from "./ws/gameSocket.js";
 import { walletAuthRoutes } from "./utils/walletAuth.js";
 
@@ -138,14 +137,6 @@ async function boot() {
   } catch (err) {
     console.error("[Boot] Database init failed:", err.message);
     console.warn("[Boot] Continuing without database (dev mode)");
-  }
-
-  try {
-    initContracts();
-    console.log("[Boot] Contracts ready");
-  } catch (err) {
-    console.warn("[Boot] Contract init failed:", err.message);
-    console.warn("[Boot] Running in offline mode");
   }
 
   server.listen(PORT, () => {
