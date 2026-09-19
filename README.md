@@ -7,6 +7,7 @@ Phase records:
 - [docs/phase0-strip.md](docs/phase0-strip.md): the fork stood up, stripped, wallet gate, schema.
 - [docs/phase1-world.md](docs/phase1-world.md): the server owns the world. Seeds, the shared layout module, collection and mint validation, modes, movement flags, and what is still client side.
 - [docs/phase2-bots.md](docs/phase2-bots.md): server side bots and powerups. Bot seats and driver, the shared collection and mint actions, the powerup authority model, the per seat speed cap.
+- [docs/phase2b-modes.md](docs/phase2b-modes.md): Quick Play and Arena. The free sandbox, the one staked mode, the stakeable flag, guest seats.
 
 ## Run it
 
