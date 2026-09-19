@@ -24,7 +24,11 @@ const TICK_RATE = 100;
 const MAX_PLAYERS = 8;
 const MIN_PLAYERS = 2;
 const ROUND_DURATION = Number(process.env.ROUND_SECONDS) || 180;   // env override for tests only
-const LOBBY_WAIT_TIME = Number(process.env.LOBBY_WAIT_SECONDS) || 30; // seconds to wait before starting with fewer than 8
+// Seconds a lobby waits for more players before the countdown. Per mode (modes.js):
+// the arena fills with bots so it waits 10, the sandbox waits 30 for real players.
+// LOBBY_WAIT_SECONDS overrides both, for sessions and tests only.
+const LOBBY_WAIT_OVERRIDE = Number(process.env.LOBBY_WAIT_SECONDS) || 0;
+const waitSecondsFor = (lobby) => LOBBY_WAIT_OVERRIDE || lobby.rules.waitSeconds;
 const MAP_HALF = 150; // MAP/2
 
 // Allowed skin values (whitelist)
@@ -285,13 +289,13 @@ export function initGameSocket(io) {
       // mode fills empty seats with bots at countdown.
       else if (lobby.players.size >= (lobby.rules.bots ? 1 : MIN_PLAYERS) && !lobby.waitStartedAt && lobby.status === 'waiting') {
         lobby.waitStartedAt = Date.now();
-        io.to(`lobby:${lobby.id}`).emit('auto:starting', { seconds: LOBBY_WAIT_TIME });
+        io.to(`lobby:${lobby.id}`).emit('auto:starting', { seconds: waitSecondsFor(lobby) });
 
         // Tick every second to update clients with remaining wait time
         lobby.waitTickInterval = setInterval(() => {
           if (lobby.status !== 'waiting') { clearInterval(lobby.waitTickInterval); return; }
           const elapsed = Math.floor((Date.now() - lobby.waitStartedAt) / 1000);
-          const remaining = Math.max(0, LOBBY_WAIT_TIME - elapsed);
+          const remaining = Math.max(0, waitSecondsFor(lobby) - elapsed);
           io.to(`lobby:${lobby.id}`).emit('lobby:wait', { seconds: remaining, players: lobby.players.size, max: MAX_PLAYERS });
           if (remaining <= 0) {
             clearInterval(lobby.waitTickInterval);
