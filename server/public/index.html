@@ -99,8 +99,8 @@ body{background:#0f0a1a;overflow:hidden;font-family:'Silkscreen',monospace}
 .menu-controls span:nth-child(even){color:#6a6490;text-align:left}
 .menu-skin span{transition:color 0.2s}
 /* X Connect bar */
-.x-bar{color:#1da1f2!important;border:1.5px solid rgba(29,161,242,0.3);margin-bottom:clamp(6px,1vh,12px);padding:clamp(6px,1vh,10px) clamp(12px,2vw,20px);text-align:center;animation:xPulse 2.5s ease-in-out infinite;font-size:clamp(9px,1.4vw,12px)!important;letter-spacing:1px}
-.x-bar.connected{color:#5cc06a!important;border-color:rgba(92,192,106,0.3);animation:none}
+.wallet-bar{color:#ffd54f!important;border:1.5px solid rgba(255,213,79,0.3);margin-bottom:clamp(6px,1vh,12px);padding:clamp(6px,1vh,10px) clamp(12px,2vw,20px);text-align:center;animation:xPulse 2.5s ease-in-out infinite;font-size:clamp(9px,1.4vw,12px)!important;letter-spacing:1px}
+.wallet-bar.connected{color:#5cc06a!important;border-color:rgba(92,192,106,0.3);animation:none}
 @keyframes xPulse{0%,100%{border-color:rgba(29,161,242,0.15);text-shadow:none}50%{border-color:rgba(29,161,242,0.5);text-shadow:0 0 10px rgba(29,161,242,0.25)}}
 /* Leaderboard */
 .lb-list{font-family:'Silkscreen',monospace;font-size:clamp(8px,1vw,11px);text-align:left;max-height:clamp(100px,20vh,200px);overflow-y:auto;margin:clamp(4px,0.8vh,10px) 0;scrollbar-width:thin;scrollbar-color:#4d4080 transparent}
@@ -398,7 +398,7 @@ body.in-menu .mob-util-btn{display:none}
 
     <!-- MAIN MENU -->
     <div id="menu-main" class="menu-page">
-      <div id="x-connect-bar" class="menu-item x-bar" data-action="connect-x"><span id="x-status">CONNECT X TO PLAY AS @YOU</span></div>
+      <div id="wallet-bar" class="menu-item wallet-bar" data-action="connect-wallet"><span id="wallet-status">CONNECT WALLET TO PLAY ONLINE</span></div>
       <div class="menu-item" data-action="quickplay-menu">QUICK PLAY</div>
       <div class="menu-item" data-action="online-menu">PLAY ONLINE</div>
       <div class="menu-item" data-action="tutorial">TUTORIAL</div>
@@ -573,24 +573,6 @@ body.in-menu .mob-util-btn{display:none}
   </div>
 </div>
 
-<script>
-// Playtest gate -- only on production domain, non-blocking
-(function(){
-  if(location.hostname.indexOf('hoppingheads')===-1)return; // skip localhost/preview
-  const params=new URLSearchParams(location.search);
-  const sp=params.get('session');
-  if(sp){localStorage.setItem('hh_session',sp);history.replaceState(null,'',location.pathname)}
-  const session=localStorage.getItem('hh_session');
-  if(!session){
-    setTimeout(()=>{window.location.href='https://hoppingheads.fun#playtest'},100);
-    return;
-  }
-  fetch('/api/beta/check?session='+encodeURIComponent(session))
-    .then(r=>r.json())
-    .then(d=>{if(!d.access)window.location.href='https://hoppingheads.fun#playtest'})
-    .catch(()=>{});// allow play if API is down
-})();
-</script>
 <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
@@ -4788,58 +4770,53 @@ function updateCrown(dt,el){
   }
 }
 
-// ======= X/TWITTER AUTH =======
-let xUser=null;
-let xSession=localStorage.getItem('hh_session');
-
-// Check URL for session token from OAuth callback
-(function checkAuthCallback(){
-  const params=new URLSearchParams(location.search);
-  const session=params.get('session');
-  if(session){
-    localStorage.setItem('hh_session',session);
-    xSession=session;
-    // Clean URL
-    const clean=location.pathname+(params.get('map')?'?map='+params.get('map'):'');
-    history.replaceState(null,'',clean);
-  }
-  const authErr=params.get('auth');
-  if(authErr){
-    console.warn('[Auth] OAuth result:',authErr);
-    const clean=location.pathname+(params.get('map')?'?map='+params.get('map'):'');
-    history.replaceState(null,'',clean);
-  }
-})();
-
-// Verify stored session
-async function verifyXSession(){
-  if(!xSession)return;
+// ======= WALLET AUTH =======
+// Sign in with Ethereum style. The server issues a nonce, the wallet signs it,
+// the server recovers the signer and hands back a session token. Identity is
+// the recovered address; nothing typed on this side is trusted. Solo modes do
+// not need it. A lobby seat and a leaderboard row do.
+let walletUser=null; // {address, short}
+let walletSession=localStorage.getItem('hh_wallet_session');
+function shortAddr(a){return a.slice(0,6)+'..'+a.slice(-4)}
+function updateWalletBar(){
+  const bar=document.getElementById('wallet-bar'),st=document.getElementById('wallet-status');
+  if(!bar||!st)return;
+  if(walletUser){st.textContent=walletUser.short.toUpperCase()+' [DISCONNECT]';bar.classList.add('connected')}
+  else{st.textContent='CONNECT WALLET TO PLAY ONLINE';bar.classList.remove('connected')}
+}
+async function verifyWalletSession(){
+  if(!walletSession)return;
   try{
-    const res=await fetch('/auth/me?token='+xSession);
+    const res=await fetch('/auth/me?token='+encodeURIComponent(walletSession));
     const data=await res.json();
-    if(data.user){
-      xUser=data.user;
-      document.getElementById('x-status').textContent='@'+xUser.username.toUpperCase()+' [DISCONNECT]';
-      document.getElementById('x-connect-bar').classList.add('connected');
-      console.log('[Auth] Logged in as @'+xUser.username);
-    }else{
-      localStorage.removeItem('hh_session');xSession=null;
-    }
+    if(data.address){walletUser={address:data.address,short:shortAddr(data.address)};updateWalletBar();console.log('[Auth] Signed in as '+walletUser.short)}
+    else{localStorage.removeItem('hh_wallet_session');walletSession=null}
   }catch(e){console.warn('[Auth] Verify failed:',e.message)}
 }
-verifyXSession();
-
-function disconnectX(){
-  if(!confirm('Disconnect X account?'))return;
-  localStorage.removeItem('hh_session');
-  xSession=null;
-  xUser=null;
-  // Playtest access requires session, so kick them back to landing
-  window.location.href='https://hoppingheads.fun#playtest';
+verifyWalletSession();
+async function connectWallet(){
+  if(!window.ethereum){alert('No wallet found. Install a browser wallet to play online.');return}
+  try{
+    const accounts=await window.ethereum.request({method:'eth_requestAccounts'});
+    const address=accounts&&accounts[0];
+    if(!address)return;
+    const r1=await fetch('/auth/nonce',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({address})});
+    const c=await r1.json();
+    if(!c.message){alert(c.error||'Sign in unavailable');return}
+    const signature=await window.ethereum.request({method:'personal_sign',params:[c.message,address]});
+    const r2=await fetch('/auth/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({address,signature})});
+    const d=await r2.json();
+    if(!d.token){alert(d.error||'Sign in failed');return}
+    localStorage.setItem('hh_wallet_session',d.token);walletSession=d.token;
+    walletUser={address:d.address,short:shortAddr(d.address)};updateWalletBar();
+  }catch(e){console.warn('[Auth] Sign in cancelled or failed:',e.message)}
 }
-
+function disconnectWallet(){
+  if(!confirm('Disconnect wallet?'))return;
+  localStorage.removeItem('hh_wallet_session');walletSession=null;walletUser=null;updateWalletBar();
+}
 function getPlayerName(){
-  return xUser?xUser.username:('Player'+Math.floor(Math.random()*999));
+  return walletUser?walletUser.short:'GUEST';
 }
 
 // Hide HUD until game starts
@@ -5165,7 +5142,7 @@ document.querySelectorAll('.menu-item').forEach(item=>{
     }else if(action==='start-lbs'){
       gameMode='lbs';
       applyLocalSkin();
-      addNameTag(player,xUser?'@'+xUser.username:'YOU',getPlayerNameColor(),getPlayerBadge());
+      addNameTag(player,walletUser?walletUser.short:'YOU',getPlayerNameColor(),getPlayerBadge());
       startGame();
     }else if(action==='online-menu'){
       showMenuPage('online');
@@ -5173,13 +5150,13 @@ document.querySelectorAll('.menu-item').forEach(item=>{
       showMenuPage('lobby');
       gameMode='multiplayer';
       applyLocalSkin();
-      addNameTag(player,xUser?'@'+xUser.username:'YOU',getPlayerNameColor(),getPlayerBadge());
+      addNameTag(player,walletUser?walletUser.short:'YOU',getPlayerNameColor(),getPlayerBadge());
       connectMultiplayer();
     }else if(action==='multiplayer-lhh'){
       showMenuPage('lobby');
       gameMode='lbs';
       applyLocalSkin();
-      addNameTag(player,xUser?'@'+xUser.username:'YOU',getPlayerNameColor(),getPlayerBadge());
+      addNameTag(player,walletUser?walletUser.short:'YOU',getPlayerNameColor(),getPlayerBadge());
       connectMultiplayer();
     }else if(action==='tutorial'){
       showMenuPage('tutorial');
@@ -5187,7 +5164,7 @@ document.querySelectorAll('.menu-item').forEach(item=>{
       gameMode='classic';
       tutorialActive=true;tutorialStep=0;
       applyLocalSkin();
-      addNameTag(player,xUser?'@'+xUser.username:'YOU',getPlayerNameColor(),getPlayerBadge());
+      addNameTag(player,walletUser?walletUser.short:'YOU',getPlayerNameColor(),getPlayerBadge());
       startGame();
     }else if(action==='settings'){
       showMenuPage('settings');
@@ -5205,7 +5182,7 @@ document.querySelectorAll('.menu-item').forEach(item=>{
     }else if(action==='start-classic'){
       gameMode='classic';
       applyLocalSkin();
-      addNameTag(player,xUser?'@'+xUser.username:'YOU',getPlayerNameColor(),getPlayerBadge());
+      addNameTag(player,walletUser?walletUser.short:'YOU',getPlayerNameColor(),getPlayerBadge());
       startGame();
     }else if(action==='prev-map'){
       switchMapInPlace((mapIdx-1+MAP_NAMES.length)%MAP_NAMES.length);
@@ -5230,9 +5207,9 @@ document.querySelectorAll('.menu-item').forEach(item=>{
       document.getElementById('snd-toggle').textContent='SOUND: '+(soundEnabled?'ON':'OFF');
       if(!soundEnabled&&audioCtx){audioCtx.suspend()}
       else if(soundEnabled&&audioCtx){audioCtx.resume()}
-    }else if(action==='connect-x'){
-      if(xUser){disconnectX()}
-      else{window.hhTrack&&window.hhTrack('connect_x_click',{from:'game'});window.location.href='https://hoppingheads.fun/auth/twitter?redirect=game'}
+    }else if(action==='connect-wallet'){
+      if(walletUser){disconnectWallet()}
+      else{connectWallet()}
     }else if(action==='edit-controls'){
       enterEditMode();
     }else if(action==='reset-controls'){
@@ -5605,8 +5582,8 @@ function useRadar(){
 }
 // Submit classic mode score to server for leaderboard
 function submitClassicScore(sc,minted,frags){
-  const name=xUser?'@'+xUser.username:'ANON';
-  fetch('/api/score',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({player_name:name,score:sc,minted:minted,fragments:frags,map_index:mapIdx,session:localStorage.getItem('hh_session')||null})})
+  if(!walletSession)return; // guests are not on the leaderboard
+  fetch('/api/score',{method:'POST',headers:{'Content-Type':'application/json','x-session':walletSession},body:JSON.stringify({score:sc,minted:minted,fragments:frags,map_index:mapIdx})})
     .catch(()=>{})
 }
 // End screen visual state helper
@@ -5957,13 +5934,13 @@ function connectMultiplayer(){
     if(!hasJoined){
       hasJoined=true;
       const s=SKINS[selectedSkin];
-      socket.emit('quickmatch',{name:getPlayerName(),skin:{skinColor:s.color,eyeStyle:s.eyes,headStyle:s.head},session:localStorage.getItem('hh_session')});
+      socket.emit('quickmatch',{name:getPlayerName(),skin:{skinColor:s.color,eyeStyle:s.eyes,headStyle:s.head},session:walletSession});
     }
   });
   socket.on('auth:denied',(d)=>{
     alert(d.reason||'Access denied');
-    localStorage.removeItem('hh_session');
-    window.location.href='https://hoppingheads.fun#playtest';
+    if(socket){socket.disconnect();socket=null;mpConnected=false}
+    showMenuPage('main');
   });
   socket.on('joined',(d)=>{
     // Sync map with server -- only if we don't already have the right map via URL

@@ -4,6 +4,7 @@
  */
 
 import { query } from "../db/pool.js";
+import { verifySessionToken, shortAddress } from "../utils/walletAuth.js";
 
 const TICK_RATE = 100;
 const MAX_PLAYERS = 8;
@@ -84,45 +85,12 @@ function findOpenLobby() {
   return null;
 }
 
-import crypto from "crypto";
-const TWITTER_CLIENT_SECRET = process.env.TWITTER_CLIENT_SECRET;
-
-// Verify Twitter session signature (mirrors twitterAuth.js)
-function verifySession(token) {
-  if (!token || typeof token !== 'string') return null;
-  if (!TWITTER_CLIENT_SECRET) return null;
-  try {
-    const [session, sig] = token.split('.');
-    if (!session || !sig) return null;
-    const expected = crypto.createHmac('sha256', TWITTER_CLIENT_SECRET)
-      .update(session).digest('base64url');
-    if (sig !== expected) return null;
-    const data = JSON.parse(Buffer.from(session, 'base64url').toString());
-    // Sessions older than 7 days are rejected
-    if (Date.now() - data.ts > 7 * 24 * 60 * 60 * 1000) return null;
-    return data;
-  } catch {
-    return null;
-  }
-}
-
-// Check playtest access in DB
-async function hasPlaytestAccess(twitterId) {
-  if (!twitterId) return false;
-  try {
-    const r = await query('SELECT 1 FROM beta_access WHERE twitter_id = $1 LIMIT 1', [twitterId]);
-    return r.rows.length > 0;
-  } catch {
-    return false;
-  }
-}
-
 export function initGameSocket(io) {
   io.on('connection', (socket) => {
     let playerId = null;
     let currentLobby = null;
     let hasJoined = false;
-    let verifiedUser = null; // Twitter user from session
+    let verifiedUser = null; // recovered wallet address
 
     // Per-event rate limiters
     const posLimiter = createRateLimiter(15);  // 15 pos updates/sec max
@@ -134,23 +102,25 @@ export function initGameSocket(io) {
       // Prevent double-join
       if (hasJoined) return;
 
-      // PLAYTEST GATE: verify Twitter session and playtest access
-      const user = verifySession(session);
-      if (!user) {
-        socket.emit('auth:denied', { reason: 'Invalid session. Connect X first.' });
+      // WALLET GATE: the session token was issued to a recovered signer
+      const address = verifySessionToken(session);
+      if (!address) {
+        socket.emit('auth:denied', { reason: 'Connect a wallet first.' });
         return;
       }
-      const access = await hasPlaytestAccess(user.id);
-      if (!access) {
-        socket.emit('auth:denied', { reason: 'Playtest access required.' });
-        return;
+      // One seat per address across live lobbies
+      for (const l of lobbies.values()) {
+        if (l.status !== 'ended' && l.players.has(address)) {
+          socket.emit('auth:denied', { reason: 'This wallet is already in a lobby.' });
+          return;
+        }
       }
-      verifiedUser = user;
+      verifiedUser = address;
       hasJoined = true;
 
-      // Use Twitter username as canonical name (ignore client-supplied name)
-      const pName = sanitize(user.username, 12) || 'Player';
-      playerId = socket.id.slice(0, 8);
+      // Identity is the recovered address (ignore client-supplied name)
+      const pName = shortAddress(address);
+      playerId = address;
 
       let lobby = findOpenLobby();
       if (!lobby) lobby = createLobby();
@@ -173,7 +143,7 @@ export function initGameSocket(io) {
 
       lobby.players.set(playerId, {
         id: playerId, socketId: socket.id, name: pName,
-        twitterId: user.id,
+        address,
         x:0, y:0, z:0, ry:0, score:0,
         fragments:[0,0,0,0,0], minted:0, moving:false,
         appearance, cosmeticExtras, index: playerIndex,
@@ -439,11 +409,11 @@ function endRound(io, lobby) {
   lobby.status = 'ended';
   const results = Array.from(lobby.players.values())
     .map(p => ({ id:p.id, name:sanitize(p.name, 12), score:p.score, minted:p.minted,
-      fragments:p.fragments.reduce((a,b)=>a+b,0), twitterId:p.twitterId }))
+      fragments:p.fragments.reduce((a,b)=>a+b,0) }))
     .sort((a, b) => b.score - a.score)
     .map((r, i) => ({ ...r, placement:i+1 }));
 
-  // Emit results without twitterId (don't leak to other players)
+  // Emit the public result fields only
   io.to(`lobby:${lobby.id}`).emit('round:end', { results: results.map(r => ({
     id:r.id, name:r.name, score:r.score, minted:r.minted, fragments:r.fragments, placement:r.placement
   }))});

@@ -2,6 +2,7 @@ import { Router } from "express";
 import { ethers } from "ethers";
 import { generateNonce, verifySignature, authMiddleware } from "../utils/auth.js";
 import { query } from "../db/pool.js";
+import { verifySessionToken, shortAddress } from "../utils/walletAuth.js";
 import { createRound as createRoundInMemory } from "../game/roundManager.js";
 import { createRoundOnchain } from "../services/contractService.js";
 import { THEME_KEYS } from "../game/mapGenerator.js";
@@ -51,11 +52,16 @@ router.get("/leaderboard/recent", async (req, res) => {
 
 router.post("/score", async (req, res) => {
   try {
-    const { player_name, score, minted, fragments, map_index } = req.body;
-    if (!player_name || typeof score !== "number") {
+    // Identity comes from the wallet session, never from the payload
+    const address = verifySessionToken(req.get("x-session") || req.body?.session);
+    if (!address) {
+      return res.status(401).json({ error: "Sign in with a wallet to submit a score" });
+    }
+    const { score, minted, fragments, map_index } = req.body;
+    if (typeof score !== "number") {
       return res.status(400).json({ error: "Invalid score data" });
     }
-    const safeName = String(player_name).slice(0, 16).replace(/[^a-zA-Z0-9@_\- ]/g, "");
+    const safeName = shortAddress(address);
     const safeScore = Math.max(0, Math.min(99999, Math.floor(score)));
     const safeMinted = Math.max(0, Math.min(50, Math.floor(minted || 0)));
     const safeFrags = Math.max(0, Math.min(999, Math.floor(fragments || 0)));

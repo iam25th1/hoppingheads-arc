@@ -8,13 +8,12 @@ import cors from "cors";
 import helmet from "helmet";
 
 import apiRoutes from "./routes/api.js";
-import betaRoutes from "./routes/beta.js";
 import trackRoutes from "./routes/track.js";
 import metricsRoutes from "./routes/metrics.js";
 import { initDb } from "./db/pool.js";
 import { initContracts } from "./services/contractService.js";
 import { initGameSocket } from "./ws/gameSocket.js";
-import { setupTwitterAuth } from "./utils/twitterAuth.js";
+import { walletAuthRoutes } from "./utils/walletAuth.js";
 
 import path from "path";
 import { fileURLToPath } from "url";
@@ -50,51 +49,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// Hostname-based routing: play.hoppingheads.fun serves game, root serves landing
-app.use((req, res, next) => {
-  const host = req.hostname;
-  if (host === 'play.hoppingheads.fun') {
-    req.isPlaySubdomain = true;
-  }
-  next();
-});
-
-// Server-side playtest gate for play subdomain and /play route
-const PLAYTEST_GATE_HTML = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Hopping Heads</title>
-<style>*{margin:0;padding:0;box-sizing:border-box}body{background:#0a0614;color:#e8e4f0;font-family:monospace;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center}
-.g{font-size:14px;color:#8a80b0}.g a{color:#ffd54f;text-decoration:none}</style></head><body>
-<div><div class="g">CHECKING ACCESS...</div></div>
-<script>
-(function(){
-  // Check URL for session (cross-subdomain handoff)
-  var url=new URL(window.location.href);
-  var urlSession=url.searchParams.get('session');
-  if(urlSession){
-    localStorage.setItem('hh_session',urlSession);
-    // Clean URL
-    history.replaceState(null,'',window.location.pathname);
-  }
-  var s=localStorage.getItem('hh_session');
-  if(!s){window.location.href='https://hoppingheads.fun#playtest';return}
-  fetch('/api/beta/check?session='+encodeURIComponent(s))
-    .then(function(r){return r.json()})
-    .then(function(d){
-      if(d.access){window.location.href='/game?session='+encodeURIComponent(s)}
-      else{window.location.href='https://hoppingheads.fun#playtest'}
-    })
-    .catch(function(){window.location.href='https://hoppingheads.fun#playtest'});
-})();
-</script></body></html>`;
-
-// Root route: landing page, gate, or game
-app.get('/', (req, res, next) => {
-  if (req.isPlaySubdomain) {
-    return res.type('html').send(PLAYTEST_GATE_HTML);
-  }
-  next();
-});
-
 // Legal pages - BEFORE static middleware
 app.get('/terms', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'landing', 'terms.html'));
@@ -103,23 +57,11 @@ app.get('/privacy', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'landing', 'privacy.html'));
 });
 
-// Actual game served at /game (behind gate)
+// Game client
 app.use("/game", express.static(path.join(__dirname, "..", "public")));
 
 // Serve landing page at root domain
 app.use(express.static(path.join(__dirname, "..", "landing")));
-// /play also goes through gate
-app.get("/play", (req, res) => {
-  res.type('html').send(PLAYTEST_GATE_HTML);
-});
-app.use("/play", express.static(path.join(__dirname, "..", "public")));
-// Also serve public assets on play subdomain root
-app.use((req, res, next) => {
-  if (req.isPlaySubdomain) {
-    return express.static(path.join(__dirname, '..', 'public'))(req, res, next);
-  }
-  next();
-});
 
 // Rate limiting (basic -- use a proper limiter in production)
 const requestCounts = new Map();
@@ -143,11 +85,9 @@ app.use((req, res, next) => {
   next();
 });
 
-// Twitter/X OAuth
-setupTwitterAuth(app);
+// Wallet sign in
+app.use("/auth", walletAuthRoutes);
 
-// Playtest API routes
-app.use("/api/beta", betaRoutes);
 app.use("/api/track", trackRoutes);
 app.use("/api/metrics", metricsRoutes);
 
