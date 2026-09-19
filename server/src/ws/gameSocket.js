@@ -9,6 +9,7 @@ import { query } from "../db/pool.js";
 import { issueRound } from "../game/rounds.js";
 import { createFragState, createRejections, tryCollect, respawnRarity, FRAG_POINTS, createMintState, noteCollect, tryMint, MINT_LIMIT } from "../game/lobbyFrags.js";
 import { lobbyModeFor, rulesFor } from "../game/modes.js";
+import { createMoveState, grantKnockback, judgeMove, MAX_SPEED } from "../game/movement.js";
 
 const require = createRequire(import.meta.url);
 const layoutModule = require("../../../shared/layout.cjs");
@@ -20,7 +21,6 @@ const MIN_PLAYERS = 2;
 const ROUND_DURATION = 180;
 const LOBBY_WAIT_TIME = 30; // seconds to wait before starting with fewer than 8
 const MAP_HALF = 150; // MAP/2
-const MAX_SPEED = 25; // units per tick (SPD=18 * 2x speed boost * margin)
 
 // Allowed skin values (whitelist)
 const VALID_SKINS = [0xff8866,0xaadd55,0xaa88dd,0x88bbcc,0xddcc55,0xff99bb,0x66ccaa,0xffaa55,
@@ -157,12 +157,12 @@ export function initGameSocket(io) {
         x:0, y:0, z:0, ry:0, score:0,
         fragments:[0,0,0,0,0], minted:0, moving:false,
         appearance, cosmeticExtras, index: playerIndex,
-        lastPosTime: Date.now(), lastX:0, lastZ:0,
         fragCount:0, maxFrags:48, shadow:0,
         maxMints:MINT_LIMIT, boinkCd:0,
         mint: createMintState(), // chests earned from validated collections; the only mint record
         rejections: createRejections(), // per reason tally of refused claims, logged at round end
         violations: { move: 0 }, // movement clamps, same idea: clamp for latency, count for phase 5
+        move: createMoveState(), // window judged speed and the knockback budget (movement.js)
       });
 
       currentLobby = lobby;
@@ -234,36 +234,25 @@ export function initGameSocket(io) {
       const growFactor = Math.min(1, (p.fragCount * 0.022) / 1.2); // mirrors client GROW_PER_FRAG
       const adjustedMaxSpeed = MAX_SPEED * (1 - growFactor * 0.45); // mirrors SPEED_PENALTY_MAX
 
-      const dx = nx - p.lastX;
-      const dz = nz - p.lastZ;
-      const dist = Math.sqrt(dx*dx + dz*dz);
+      // Speed is judged over a short window of history against the ceiling,
+      // with knockback as a budget the boink handler grants (movement.js).
+      // Overspeed is clamped, never ejected, and counted: a sustained hack
+      // flags on every update once the window fills. Logged on the first
+      // three and every fiftieth after, so a real cheat cannot flood the log.
       const now = Date.now();
-      const elapsed = Math.max(now - p.lastPosTime, 16) / 1000;
-      const maxDist = adjustedMaxSpeed * elapsed + 2; // +2 margin for knockback
-
-      if (dist > maxDist && p.lastPosTime > 0) {
-        // Suspicious movement. Still clamp, so a latency spike does not eject
-        // an honest player, but count it and log it: a slow continuous
-        // cheater must not be invisible. No ejection yet. Logged on the first
-        // three and every fiftieth after, so a real cheat cannot flood the log.
+      const judged = judgeMove(p.move, nx, nz, now, adjustedMaxSpeed);
+      if (judged.flagged) {
         p.violations.move++;
         if (p.violations.move <= 3 || p.violations.move % 50 === 0) {
-          console.warn(`[MP] FLAG pos ${playerId} moved ${dist.toFixed(1)} max ${maxDist.toFixed(1)} in ${Math.round(elapsed * 1000)}ms (count ${p.violations.move})`);
+          console.warn(`[MP] FLAG pos ${playerId} path ${judged.path.toFixed(1)} over ${judged.spanMs}ms, allowed ${judged.allowance.toFixed(1)}, step ${judged.step.toFixed(1)} (count ${p.violations.move})`);
         }
-        const ratio = maxDist / dist;
-        p.x = p.lastX + dx * ratio;
-        p.z = p.lastZ + dz * ratio;
-      } else {
-        p.x = nx;
-        p.z = nz;
       }
+      p.x = judged.x;
+      p.z = judged.z;
 
       p.y = 0; // Y is always 0 (flat ground - LOCKED)
       p.ry = nry;
       p.moving = !!moving;
-      p.lastX = p.x;
-      p.lastZ = p.z;
-      p.lastPosTime = now;
     });
 
     socket.on('frag:collected', ({ id }) => {
@@ -364,6 +353,10 @@ export function initGameSocket(io) {
 
       // Validate and clamp attacker frag count (use server-tracked value, don't trust client)
       const attackerFrags = p.fragCount || 0;
+
+      // The target is about to be knocked back by the client; give the
+      // movement judge the budget to accept it, once.
+      grantKnockback(targetPlayer.move, Date.now());
 
       const targetSocket = io.sockets.sockets.get(targetPlayer.socketId);
       if (targetSocket) targetSocket.emit('boink:hit', { from: playerId, attackerFrags });
