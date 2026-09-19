@@ -7,9 +7,11 @@ import crypto from "crypto";
 import { createRequire } from "module";
 import { query } from "../db/pool.js";
 import { issueRound } from "../game/rounds.js";
-import { createFragState, createRejections, tryCollect, respawnRarity, FRAG_POINTS, createMintState, noteCollect, tryMint, MINT_LIMIT } from "../game/lobbyFrags.js";
+import { createFragState, tryCollect, respawnRarity, FRAG_POINTS, noteCollect, tryMint, MINT_LIMIT } from "../game/lobbyFrags.js";
 import { lobbyModeFor, rulesFor } from "../game/modes.js";
-import { createMoveState, grantKnockback, judgeMove, MAX_SPEED } from "../game/movement.js";
+import { grantKnockback, judgeMove, MAX_SPEED } from "../game/movement.js";
+import { createSeat, fillWithBots, countSeats, BOT_FILL_TO, DEFAULT_SKINS } from "../game/bots.js";
+import { isBotId } from "../game/ids.js";
 
 const require = createRequire(import.meta.url);
 const layoutModule = require("../../../shared/layout.cjs");
@@ -18,8 +20,8 @@ import { verifySessionToken, shortAddress } from "../utils/walletAuth.js";
 const TICK_RATE = 100;
 const MAX_PLAYERS = 8;
 const MIN_PLAYERS = 2;
-const ROUND_DURATION = 180;
-const LOBBY_WAIT_TIME = 30; // seconds to wait before starting with fewer than 8
+const ROUND_DURATION = Number(process.env.ROUND_SECONDS) || 180;   // env override for tests only
+const LOBBY_WAIT_TIME = Number(process.env.LOBBY_WAIT_SECONDS) || 30; // seconds to wait before starting with fewer than 8
 const MAP_HALF = 150; // MAP/2
 
 // Allowed skin values (whitelist)
@@ -32,13 +34,6 @@ const VALID_EYES = ['X','Dots','Slit','Open',
 const VALID_HEADS = ['Horns','Crown','Antenna','Spike','Ears',
   // Premium store headwear
   'Halo','TopHat','Beanie','Mohawk','Propeller','Mushroom','FlameCrown'];
-const DEFAULT_SKINS = [
-  {skinColor:0xff8866,eyeStyle:'X',headStyle:'Horns'},
-  {skinColor:0xaadd55,eyeStyle:'Dots',headStyle:'Crown'},
-  {skinColor:0xaa88dd,eyeStyle:'Slit',headStyle:'Antenna'},
-  {skinColor:0x88bbcc,eyeStyle:'Open',headStyle:'Spike'},
-  {skinColor:0xddcc55,eyeStyle:'X',headStyle:'Ears'},
-];
 
 // Rate limiter per socket
 function createRateLimiter(maxPerSec) {
@@ -151,19 +146,12 @@ export function initGameSocket(io) {
         }
       }
 
-      lobby.players.set(playerId, {
-        id: playerId, socketId: socket.id, name: pName,
-        address,
-        x:0, y:0, z:0, ry:0, score:0,
-        fragments:[0,0,0,0,0], minted:0, moving:false,
-        appearance, cosmeticExtras, index: playerIndex,
-        fragCount:0, maxFrags:48, shadow:0,
-        maxMints:MINT_LIMIT, boinkCd:0,
-        mint: createMintState(), // chests earned from validated collections; the only mint record
-        rejections: createRejections(), // per reason tally of refused claims, logged at round end
-        violations: { move: 0 }, // movement clamps, same idea: clamp for latency, count for phase 5
-        move: createMoveState(), // window judged speed and the knockback budget (movement.js)
-      });
+      // One seat shape for humans and bots (bots.js). cosmeticExtras is
+      // always {} since phase 0; kept on the seat for the joined payload.
+      lobby.players.set(playerId, createSeat({
+        id: playerId, socketId: socket.id, name: pName, address, appearance, index: playerIndex,
+        isBot: false, maxMints: MINT_LIMIT,
+      }));
 
       currentLobby = lobby;
       socket.join(`lobby:${lobby.id}`);
@@ -188,10 +176,11 @@ export function initGameSocket(io) {
         if (lobby.waitTickInterval) { clearInterval(lobby.waitTickInterval); lobby.waitTickInterval = null; }
         if (lobby.autoStartTimer) { clearTimeout(lobby.autoStartTimer); lobby.autoStartTimer = null; }
         io.to(`lobby:${lobby.id}`).emit('lobby:full');
-        beginCountdown(io, lobby);
+        beginCountdown(io, lobby).catch((e) => console.error('[MP] Countdown failed:', e.message));
       }
-      // First 2+ players: start 2-min wait countdown
-      else if (lobby.players.size >= MIN_PLAYERS && !lobby.waitStartedAt && lobby.status === 'waiting') {
+      // Enough to start a wait: MIN_PLAYERS humans, or a single human when the
+      // mode fills empty seats with bots at countdown.
+      else if (lobby.players.size >= (lobby.rules.bots ? 1 : MIN_PLAYERS) && !lobby.waitStartedAt && lobby.status === 'waiting') {
         lobby.waitStartedAt = Date.now();
         io.to(`lobby:${lobby.id}`).emit('auto:starting', { seconds: LOBBY_WAIT_TIME });
 
@@ -204,7 +193,7 @@ export function initGameSocket(io) {
           if (remaining <= 0) {
             clearInterval(lobby.waitTickInterval);
             lobby.waitTickInterval = null;
-            beginCountdown(io, lobby);
+            beginCountdown(io, lobby).catch((e) => console.error('[MP] Countdown failed:', e.message));
           }
         }, 1000);
       }
@@ -373,7 +362,9 @@ export function initGameSocket(io) {
         io.to(`lobby:${currentLobby.id}`).emit('auto:cancelled');
       }
 
-      if (currentLobby.players.size === 0) {
+      // No humans left: tear the lobby down. Bots never leave on their own,
+      // so a size check alone would keep a bot only round running to the end.
+      if (countSeats(currentLobby.players).humans === 0) {
         if (currentLobby.tickInterval) clearInterval(currentLobby.tickInterval);
         if (currentLobby.countdownInterval) clearInterval(currentLobby.countdownInterval);
         if (currentLobby.autoStartTimer) clearTimeout(currentLobby.autoStartTimer);
@@ -392,9 +383,22 @@ export function initGameSocket(io) {
   }, 60000);
 }
 
-function beginCountdown(io, lobby) {
+async function beginCountdown(io, lobby) {
   lobby.status = 'countdown';
   if (lobby.waitTickInterval) { clearInterval(lobby.waitTickInterval); lobby.waitTickInterval = null; }
+  // The seed is issued here, at countdown, so bot ids can carry the run's
+  // seed prefix (ids.js). It reaches clients on round:start as before.
+  const round = await issueRound({ mode: lobby.rules.roundMode, mapIndex: lobby.mapIndex, maxPlayers: MAX_PLAYERS, durationSecs: ROUND_DURATION });
+  lobby.seed = round.seed;
+  lobby.roundId = round.id;
+  // Fill empty seats with bots. They join the roster like anyone else.
+  if (lobby.rules.bots && lobby.players.size < BOT_FILL_TO) {
+    for (const bot of fillWithBots(lobby, lobby.seed, BOT_FILL_TO, MAX_PLAYERS, MINT_LIMIT)) {
+      io.to(`lobby:${lobby.id}`).emit('player:joined', { id: bot.id, name: bot.name, appearance: bot.appearance, extras: {}, count: lobby.players.size });
+    }
+    const c = countSeats(lobby.players);
+    console.log(`[MP] Lobby ${lobby.id} filled with ${c.bots} bot(s) alongside ${c.humans} human(s)`);
+  }
   let count = 3;
   io.to(`lobby:${lobby.id}`).emit('countdown', { count });
   lobby.countdownInterval = setInterval(() => {
@@ -409,12 +413,10 @@ function beginCountdown(io, lobby) {
 }
 
 async function startRound(io, lobby) {
-  // The seed is issued here, on the server, and written to the round row
-  // before any client sees it. The client builds the fragment layout from
-  // exactly what this emits, through the same shared module the lobby uses.
-  const round = await issueRound({ mode: lobby.rules.roundMode, mapIndex: lobby.mapIndex, maxPlayers: MAX_PLAYERS, durationSecs: ROUND_DURATION });
-  lobby.seed = round.seed;
-  lobby.roundId = round.id;
+  // The seed was issued at countdown and written to the round row before any
+  // client saw it. The client builds the fragment layout from exactly what
+  // this emits, through the same shared module the lobby uses.
+  if (!lobby.seed) throw new Error('startRound before the seed was issued');
   // The lobby holds the fragment state for the round, built from the same
   // shared module the client uses, so both sides agree on every position.
   // A mode without fragments holds none, and any claim is wrong_mode.
@@ -507,11 +509,13 @@ async function saveResults(results, lobby) {
   for (const r of results) {
     // r.id is the recovered address. Every seat written here is human;
     // a bot seat would carry a bot id and is_bot true (see game/ids.js).
+    const isBot = isBotId(r.id);
     await query(
       `INSERT INTO round_results (round_id, participant, is_bot, score, minted, fragments, placement)
-       VALUES ($1, $2, false, $3, $4, $5, $6)`,
-      [roundId, r.id, r.score, r.minted, r.fragments, r.placement]
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [roundId, r.id, isBot, r.score, r.minted, r.fragments, r.placement]
     );
+    if (isBot) continue; // stats are for wallets
     await query(
       `INSERT INTO player_stats (address, total_score, total_wins, total_rounds, total_minted, best_score)
        VALUES ($1, $2, $3, 1, $4, $5)
