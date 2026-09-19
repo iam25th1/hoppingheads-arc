@@ -19,6 +19,7 @@
 
 const HUMAN_RE = /^0x[0-9a-f]{40}$/;
 const BOT_RE = /^bot:[0-9a-f]{8}:\d{1,3}$/;
+const GUEST_RE = /^guest:[0-9a-f]{16}$/;
 
 export function isHumanId(id) {
   return typeof id === 'string' && HUMAN_RE.test(id);
@@ -26,6 +27,20 @@ export function isHumanId(id) {
 
 export function isBotId(id) {
   return typeof id === 'string' && BOT_RE.test(id);
+}
+
+/**
+ * A guest holds a sandbox seat with no wallet. guest:<16 hex>, random per
+ * socket, so it is never an address and never a bot, and nothing a payout
+ * could reference.
+ */
+export function isGuestId(id) {
+  return typeof id === 'string' && GUEST_RE.test(id);
+}
+
+export function guestId(randomHex16) {
+  if (!/^[0-9a-f]{16}$/.test(randomHex16)) throw new TypeError('guestId: needs 16 hex digits');
+  return `guest:${randomHex16}`;
 }
 
 /**

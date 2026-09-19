@@ -22,7 +22,8 @@ CREATE INDEX IF NOT EXISTS idx_players_address ON players(address);
 -- commit_hash, signature and tx_hash are what phases 2 and 3 fill.
 CREATE TABLE IF NOT EXISTS rounds (
   id              SERIAL PRIMARY KEY,
-  mode            VARCHAR(24) NOT NULL,             -- classic-solo, lbs-solo, multiplayer
+  mode            VARCHAR(24) NOT NULL,             -- arena, sandbox-lbs-online, sandbox-classic-solo, sandbox-lbs-solo
+  stakeable       BOOLEAN NOT NULL DEFAULT false,   -- true only for arena; the constraint below enforces it
   map_index       SMALLINT,
   seed            VARCHAR(66),                      -- run seed, hex
   theme           VARCHAR(64),
@@ -41,6 +42,10 @@ CREATE TABLE IF NOT EXISTS rounds (
   tx_hash         VARCHAR(66),                      -- phase 3: settlement transaction
   created_at      TIMESTAMPTZ DEFAULT NOW()
 );
+-- Existing databases: add the column, then the rule. Both idempotent.
+ALTER TABLE rounds ADD COLUMN IF NOT EXISTS stakeable BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE rounds DROP CONSTRAINT IF EXISTS rounds_stakeable_arena_only;
+ALTER TABLE rounds ADD CONSTRAINT rounds_stakeable_arena_only CHECK (NOT stakeable OR mode = 'arena');
 CREATE INDEX IF NOT EXISTS idx_rounds_status ON rounds(status);
 CREATE INDEX IF NOT EXISTS idx_rounds_created ON rounds(created_at DESC);
 

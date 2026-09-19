@@ -48,7 +48,7 @@ export function pickMapIndex(requested) {
  * @param {function} [q]             query function, injectable for tests
  */
 export async function issueRound(opts, q = query) {
-  const { mode, mapIndex, issuedTo = null, maxPlayers = 1, durationSecs = 180, persist = true } = opts;
+  const { mode, mapIndex, issuedTo = null, maxPlayers = 1, durationSecs = 180, persist = true, stakeable = false } = opts;
   if (typeof mode !== "string" || !/^[a-z-]{3,24}$/.test(mode)) throw new TypeError("issueRound: bad mode");
   const seed = newSeed();
   const map = pickMapIndex(mapIndex);
@@ -56,14 +56,14 @@ export async function issueRound(opts, q = query) {
   if (persist) {
     try {
       const r = await q(
-        `INSERT INTO rounds (mode, map_index, seed, status, max_players, duration_secs, issued_to, start_time)
-         VALUES ($1, $2, $3, 'active', $4, $5, $6, NOW()) RETURNING id`,
-        [mode, map, seed, maxPlayers, durationSecs, issuedTo]
+        `INSERT INTO rounds (mode, map_index, seed, status, max_players, duration_secs, issued_to, start_time, stakeable)
+         VALUES ($1, $2, $3, 'active', $4, $5, $6, NOW(), $7) RETURNING id`,
+        [mode, map, seed, maxPlayers, durationSecs, issuedTo, stakeable === true]
       );
       id = r.rows[0].id;
     } catch (err) {
       console.warn(`[Rounds] could not persist ${mode} round (${err.message}); issuing without a row`);
     }
   }
-  return { id, seed, mapIndex: map, mode };
+  return { id, seed, mapIndex: map, mode, stakeable: stakeable === true };
 }

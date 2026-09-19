@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isHumanId, isBotId, botId } from '../src/game/ids.js';
+import { isHumanId, isBotId, botId, isGuestId, guestId } from '../src/game/ids.js';
 
 const HUMAN = '0x' + 'ab'.repeat(20);
 
@@ -34,4 +34,13 @@ test('botId rejects bad input', () => {
   assert.throws(() => botId('0xdeadbeef', -1), RangeError);
   assert.throws(() => botId('0xdeadbeef', 1000), RangeError);
   assert.throws(() => botId('0xdeadbeef', 1.5), RangeError);
+});
+
+test('guest ids: guest:<16 hex>, disjoint from humans and bots', () => {
+  const g = guestId('0123456789abcdef');
+  assert.equal(g, 'guest:0123456789abcdef');
+  assert.ok(isGuestId(g));
+  assert.ok(!isHumanId(g) && !isBotId(g));
+  assert.ok(!isGuestId(HUMAN) && !isGuestId('bot:deadbeef:1') && !isGuestId('guest:short'));
+  assert.throws(() => guestId('zz'), TypeError);
 });

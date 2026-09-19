@@ -26,13 +26,14 @@ test('pickMapIndex: honours a valid request, otherwise random in range', () => {
 test('issueRound: persists the seed and map on the round row', async () => {
   const calls = [];
   const q = async (sql, params) => { calls.push({ sql, params }); return { rows: [{ id: 42 }] }; };
-  const r = await issueRound({ mode: 'classic-solo', mapIndex: 3, issuedTo: '0x' + 'ab'.repeat(20) }, q);
+  const r = await issueRound({ mode: 'sandbox-classic-solo', mapIndex: 3, issuedTo: '0x' + 'ab'.repeat(20) }, q);
   assert.equal(r.id, 42);
   assert.equal(r.mapIndex, 3);
   assert.match(r.seed, /^0x[0-9a-f]{64}$/);
   assert.equal(calls.length, 1);
   assert.match(calls[0].sql, /INSERT INTO rounds/);
-  assert.deepEqual(calls[0].params, ['classic-solo', 3, r.seed, 1, 180, '0x' + 'ab'.repeat(20)]);
+  assert.deepEqual(calls[0].params, ['sandbox-classic-solo', 3, r.seed, 1, 180, '0x' + 'ab'.repeat(20), false]);
+  assert.equal(r.stakeable, false);
 });
 
 test('issueRound: still issues when the database is down, with no id', async () => {
@@ -40,16 +41,17 @@ test('issueRound: still issues when the database is down, with no id', async () 
   const warn = console.warn; const logged = [];
   console.warn = (m) => logged.push(m);
   try {
-    const r = await issueRound({ mode: 'multiplayer', maxPlayers: 8 }, q);
+    const r = await issueRound({ mode: 'arena', maxPlayers: 8, stakeable: true }, q);
     assert.equal(r.id, null);
     assert.match(r.seed, /^0x[0-9a-f]{64}$/);
-    assert.ok(logged.some((m) => /could not persist multiplayer round/.test(m)));
+    assert.ok(logged.some((m) => /could not persist arena round/.test(m)));
+    assert.equal(r.stakeable, true);
   } finally { console.warn = warn; }
 });
 
 test('issueRound: persist false never touches the database', async () => {
   const q = async () => { throw new Error('should not be called'); };
-  const r = await issueRound({ mode: 'classic-solo', persist: false }, q);
+  const r = await issueRound({ mode: 'sandbox-classic-solo', persist: false }, q);
   assert.equal(r.id, null);
   assert.ok(r.seed);
 });
@@ -57,4 +59,13 @@ test('issueRound: persist false never touches the database', async () => {
 test('issueRound: rejects a malformed mode', async () => {
   await assert.rejects(issueRound({ mode: 'DROP TABLE' }, async () => ({ rows: [] })), TypeError);
   await assert.rejects(issueRound({ mode: 7 }, async () => ({ rows: [] })), TypeError);
+});
+
+test('issueRound: stakeable is written as a boolean and defaults to false', async () => {
+  const calls = [];
+  const q = async (sql, params) => { calls.push(params); return { rows: [{ id: 1 }] }; };
+  await issueRound({ mode: 'arena', stakeable: true }, q);
+  await issueRound({ mode: 'sandbox-lbs-online' }, q);
+  await issueRound({ mode: 'sandbox-lbs-online', stakeable: 'yes' }, q);
+  assert.deepEqual(calls.map((p) => p[6]), [true, false, false], 'only a literal true counts');
 });
