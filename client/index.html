@@ -381,12 +381,11 @@ body.in-menu .mob-util-btn{display:none}
 
     <!-- MAIN MENU -->
     <div id="menu-main" class="menu-page">
-      <div id="wallet-bar" class="menu-item wallet-bar" data-action="connect-wallet"><span id="wallet-status">CONNECT WALLET TO PLAY ONLINE</span></div>
+      <div id="wallet-bar" class="menu-item wallet-bar" data-action="connect-wallet"><span id="wallet-status">CONNECT WALLET FOR THE ARENA</span></div>
       <div class="menu-item" data-action="quickplay-menu">QUICK PLAY</div>
-      <div class="menu-item" data-action="online-menu">PLAY ONLINE</div>
+      <div class="menu-item" data-action="arena">ARENA</div>
       <div class="menu-item" data-action="tutorial">TUTORIAL</div>
       <div class="menu-item menu-skin" data-action="cycle-skin">SKIN: <span id="skin-name">CORAL</span></div>
-      <div class="menu-item" data-action="store" style="color:#ffd54f">STORE</div>
       <div class="menu-item" data-action="leaderboard">LEADERBOARD</div>
       <div class="menu-item" data-action="settings">SETTINGS</div>
     </div>
@@ -400,7 +399,7 @@ body.in-menu .mob-util-btn{display:none}
 
     <!-- MULTIPLAYER LOBBY -->
     <div id="menu-lobby" class="menu-page" style="display:none">
-      <div class="menu-label">PLAY ONLINE</div>
+      <div class="menu-label" id="lobby-label">LOBBY</div>
       <div id="lobby-map" class="menu-map"></div>
       <div id="lobby-count" class="menu-status"></div>
       <div id="lobby-status" class="menu-sub"></div>
@@ -412,6 +411,7 @@ body.in-menu .mob-util-btn{display:none}
       <div class="menu-label">QUICK PLAY</div>
       <div class="menu-item" data-action="classic">CLASSIC</div>
       <div class="menu-item" data-action="lbs-menu">LAST HEAD HOPPING</div>
+      <div class="menu-item" data-action="multiplayer-lhh">ONLINE LAST HEAD HOPPING</div>
       <div class="menu-item" data-action="back">BACK</div>
     </div>
 
@@ -464,13 +464,6 @@ body.in-menu .mob-util-btn{display:none}
       <div class="menu-item" data-action="back">BACK</div>
     </div>
 
-    <div id="menu-online" class="menu-page" style="display:none">
-      <div class="menu-label">PLAY ONLINE</div>
-      <div class="menu-item" data-action="multiplayer-classic">CLASSIC</div>
-      <div class="menu-item" data-action="multiplayer-lhh">LAST HEAD HOPPING</div>
-      <div class="menu-item" data-action="back">BACK</div>
-    </div>
-
     <div id="menu-tutorial" class="menu-page" style="display:none">
       <div class="menu-label">TUTORIAL</div>
       <div class="menu-sub" style="color:#e8e4f0;line-height:1.6;text-align:left;max-width:280px;margin:0 auto">
@@ -492,7 +485,7 @@ body.in-menu .mob-util-btn{display:none}
       <div class="p-divider" style="margin:8px auto;width:80%"></div>
       <div class="menu-sub" style="color:#8a80b0;line-height:1.6;text-align:left;max-width:280px;margin:0 auto">
         <span style="color:#ffd54f">QUICK PLAY</span> Solo classic mode<br>
-        <span style="color:#5cc06a">CLASSIC ONLINE</span> Multiplayer frags<br>
+        <span style="color:#5cc06a">ARENA</span> Online classic, wallet required<br>
         <span style="color:#ff6b6b">LAST HEAD HOPPING</span> No frags, pure combat, last one standing wins<br>
       </div>
       <div class="menu-item" data-action="start-tutorial">PLAY TUTORIAL</div>
@@ -2645,7 +2638,7 @@ function applyRespawn(moved){for(const lf of moved){const f=fragments[lf.id];if(
 let soloRound=null,pendingSoloRound=false,currentRoundId=null,currentRoundKey=null;
 function requestSoloRound(){
   const headers={'Content-Type':'application/json'};if(walletSession)headers['x-session']=walletSession;
-  return fetch('/api/round/start',{method:'POST',headers,body:JSON.stringify({mode:gameMode==='lbs'?'lbs-solo':'classic-solo',mapIndex:mapIdx})}).then(r=>r.ok?r.json():null);
+  return fetch('/api/round/start',{method:'POST',headers,body:JSON.stringify({mode:gameMode==='lbs'?'sandbox-lbs-solo':'sandbox-classic-solo',mapIndex:mapIdx})}).then(r=>r.ok?r.json():null);
 }
 const unlockedNFTs=[];
 function spawnNFT(rarity){
@@ -4789,7 +4782,13 @@ function updateWalletBar(){
   const bar=document.getElementById('wallet-bar'),st=document.getElementById('wallet-status');
   if(!bar||!st)return;
   if(walletUser){st.textContent=walletUser.short.toUpperCase()+' [DISCONNECT]';bar.classList.add('connected')}
-  else{st.textContent='CONNECT WALLET TO PLAY ONLINE';bar.classList.remove('connected')}
+  else{st.textContent='CONNECT WALLET FOR THE ARENA';bar.classList.remove('connected')}
+}
+// Arena without a wallet: say so on the wallet bar for a moment. Quick Play needs none.
+function showArenaHint(){
+  const st=document.getElementById('wallet-status');if(!st)return;
+  const prev=st.textContent,msg='CONNECT A WALLET TO ENTER THE ARENA';st.textContent=msg;
+  setTimeout(()=>{if(st.textContent===msg)st.textContent=prev},2500);
 }
 async function verifyWalletSession(){
   if(!walletSession)return;
@@ -5151,15 +5150,19 @@ document.querySelectorAll('.menu-item').forEach(item=>{
       applyLocalSkin();
       addNameTag(player,walletUser?walletUser.short:'YOU',getPlayerNameColor(),getPlayerBadge());
       startGame();
-    }else if(action==='online-menu'){
-      showMenuPage('online');
-    }else if(action==='multiplayer-classic'){
+    }else if(action==='arena'){
+      // Arena: the staked path, the server authoritative classic round. Wallet required; the
+      // server refuses a seat without one too (auth:denied).
+      if(!walletUser){showArenaHint();return}
+      document.getElementById('lobby-label').textContent='ARENA';
       showMenuPage('lobby');
       gameMode='multiplayer';
       applyLocalSkin();
       addNameTag(player,walletUser?walletUser.short:'YOU',getPlayerNameColor(),getPlayerBadge());
       connectMultiplayer();
     }else if(action==='multiplayer-lhh'){
+      // Quick Play, online: a sandbox lobby, playable as a guest
+      document.getElementById('lobby-label').textContent='ONLINE LAST HEAD HOPPING';
       showMenuPage('lobby');
       gameMode='lbs';
       applyLocalSkin();
@@ -5956,7 +5959,7 @@ function connectMultiplayer(){
     if(!hasJoined){
       hasJoined=true;
       const s=SKINS[selectedSkin];
-      socket.emit('quickmatch',{name:getPlayerName(),skin:{skinColor:s.color,eyeStyle:s.eyes,headStyle:s.head},session:walletSession,mode:gameMode==='lbs'?'lbs':'classic'});
+      socket.emit('quickmatch',{name:getPlayerName(),skin:{skinColor:s.color,eyeStyle:s.eyes,headStyle:s.head},session:walletSession,mode:gameMode==='lbs'?'sandbox-lbs':'arena'});
     }
   });
   socket.on('auth:denied',(d)=>{
@@ -6105,7 +6108,7 @@ function connectMultiplayer(){
     gameActive=false;gamePhase='ended';
     
 
-    document.getElementById('end-map').textContent='ONLINE - '+MAP_NAMES[mapIdx];
+    document.getElementById('end-map').textContent=(gameMode==='lbs'?'ONLINE - ':'ARENA - ')+MAP_NAMES[mapIdx];
     document.getElementById('end-minted').textContent=mintedCount;
     document.getElementById('end-frags').textContent=fragCounts.reduce((a,b)=>a+b,0);
     document.getElementById('hud').style.opacity='0.3';document.getElementById('minimap').style.opacity='0.3';
