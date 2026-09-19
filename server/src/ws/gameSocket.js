@@ -11,6 +11,7 @@ import { createFragState, tryCollect, respawnRarity, FRAG_POINTS, noteCollect, t
 import { lobbyModeFor, rulesFor } from "../game/modes.js";
 import { grantKnockback, judgeMove, MAX_SPEED } from "../game/movement.js";
 import { createSeat, fillWithBots, countSeats, BOT_FILL_TO, DEFAULT_SKINS } from "../game/bots.js";
+import { createBotBrain, stepBot, BOT_SPEED } from "../game/botDriver.js";
 import { isBotId } from "../game/ids.js";
 
 const require = createRequire(import.meta.url);
@@ -79,6 +80,55 @@ function createLobby(mode) {
   };
   lobbies.set(id, lobby);
   return lobby;
+}
+
+/**
+ * The one movement path. A human's pos update and a bot's tick both land
+ * here: the ceiling is computed from the seat, the move is judged over the
+ * window with knockback as a budget (movement.js), overspeed is clamped and
+ * counted, never ejected. Logged on the first three flags and every fiftieth
+ * after, so a real cheat cannot flood the log.
+ */
+function applyMove(p, nx, nz, ry, moving, now) {
+  // Grow slows a player (mirrors client GROW_PER_FRAG and SPEED_PENALTY_MAX)
+  const growFactor = Math.min(1, (p.fragCount * 0.022) / 1.2);
+  const adjustedMaxSpeed = MAX_SPEED * (1 - growFactor * 0.45);
+  const judged = judgeMove(p.move, nx, nz, now, adjustedMaxSpeed);
+  if (judged.flagged) {
+    p.violations.move++;
+    if (p.violations.move <= 3 || p.violations.move % 50 === 0) {
+      console.warn(`[MP] FLAG pos ${p.id} path ${judged.path.toFixed(1)} over ${judged.spanMs}ms, allowed ${judged.allowance.toFixed(1)}, step ${judged.step.toFixed(1)} (count ${p.violations.move})`);
+    }
+  }
+  p.x = judged.x;
+  p.z = judged.z;
+  p.y = 0; // Y is always 0 (flat ground - LOCKED)
+  p.ry = ry;
+  p.moving = moving;
+  return judged;
+}
+
+/** Slot n of a bot id, for its stream. */
+function botSlot(id) {
+  return Number(id.split(":")[2]);
+}
+
+/** Drive every bot one tick: decide, move through applyMove. */
+function driveBots(lobby, now) {
+  const dt = lobby.lastTickAt ? (now - lobby.lastTickAt) / 1000 : 0.1;
+  lobby.lastTickAt = now;
+  if (!lobby.frags) return;
+  // The world a bot sees: unclaimed fragments and human positions.
+  const fragments = [];
+  for (const f of lobby.frags.frags.values()) if (f.claimedBy === null) fragments.push({ id: f.id, x: f.x, z: f.z });
+  const humans = [];
+  for (const p of lobby.players.values()) if (!p.isBot) humans.push({ x: p.x, z: p.z });
+  const world = { fragments, humans };
+  for (const p of lobby.players.values()) {
+    if (!p.isBot || !p.brain) continue;
+    const r = stepBot(p.brain, p, world, BOT_SPEED, dt);
+    applyMove(p, r.nx, r.nz, r.ry, r.moving, now);
+  }
 }
 
 function findOpenLobby(mode) {
@@ -219,29 +269,7 @@ export function initGameSocket(io) {
       // Track shadow state (0 or 1)
       p.shadow = (sh === 1) ? 1 : 0;
 
-      // Anti-teleport: adjust max speed based on grow (more frags = slower)
-      const growFactor = Math.min(1, (p.fragCount * 0.022) / 1.2); // mirrors client GROW_PER_FRAG
-      const adjustedMaxSpeed = MAX_SPEED * (1 - growFactor * 0.45); // mirrors SPEED_PENALTY_MAX
-
-      // Speed is judged over a short window of history against the ceiling,
-      // with knockback as a budget the boink handler grants (movement.js).
-      // Overspeed is clamped, never ejected, and counted: a sustained hack
-      // flags on every update once the window fills. Logged on the first
-      // three and every fiftieth after, so a real cheat cannot flood the log.
-      const now = Date.now();
-      const judged = judgeMove(p.move, nx, nz, now, adjustedMaxSpeed);
-      if (judged.flagged) {
-        p.violations.move++;
-        if (p.violations.move <= 3 || p.violations.move % 50 === 0) {
-          console.warn(`[MP] FLAG pos ${playerId} path ${judged.path.toFixed(1)} over ${judged.spanMs}ms, allowed ${judged.allowance.toFixed(1)}, step ${judged.step.toFixed(1)} (count ${p.violations.move})`);
-        }
-      }
-      p.x = judged.x;
-      p.z = judged.z;
-
-      p.y = 0; // Y is always 0 (flat ground - LOCKED)
-      p.ry = nry;
-      p.moving = !!moving;
+      applyMove(p, nx, nz, nry, !!moving, Date.now());
     });
 
     socket.on('frag:collected', ({ id }) => {
@@ -421,6 +449,9 @@ async function startRound(io, lobby) {
   // shared module the client uses, so both sides agree on every position.
   // A mode without fragments holds none, and any claim is wrong_mode.
   lobby.frags = lobby.rules.fragments ? createFragState(layoutModule.createLayout(lobby.seed, lobby.mapIndex)) : null;
+  // Every bot gets a brain: a stream derived from the round seed and its slot.
+  for (const p of lobby.players.values()) if (p.isBot) p.brain = createBotBrain(lobby.seed, botSlot(p.id));
+  lobby.lastTickAt = null;
 
   lobby.status = 'active';
   lobby.startTime = Date.now();
@@ -436,7 +467,9 @@ async function startRound(io, lobby) {
   lobby.tickInterval = setInterval(() => {
     if (lobby.status !== 'active') { clearInterval(lobby.tickInterval); return; }
 
-    const timeLeft = Math.max(0, lobby.endTime - Date.now());
+    const tickNow = Date.now();
+    const timeLeft = Math.max(0, lobby.endTime - tickNow);
+    driveBots(lobby, tickNow);
     const players = [];
     for (const [id, p] of lobby.players) {
       players.push({
