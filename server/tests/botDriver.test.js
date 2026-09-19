@@ -101,3 +101,23 @@ test('a bot stays inside the map and moves at most BOT_SPEED per second', () => 
     bot.x = r.nx; bot.z = r.nz;
   }
 });
+
+test('a bot follows its target fragment when a respawn moves it, and re-decides when it is gone', () => {
+  const l = layout.createLayout(SEED, 4);
+  const brain = createBotBrain(SEED, 0);
+  const f = l.fragments[12];
+  const bot = { x: f.x + 20, z: f.z, ry: 0 };
+  // Force a seek on fragment 12 by making it the only one in range
+  const only = { fragments: [{ id: 12, x: f.x, z: f.z }], humans: [] };
+  stepBot(brain, bot, only);
+  assert.equal(brain.target.fragId, 12);
+  // Respawn moves it far away: the target follows, no claim is attempted at the old spot
+  const movedWorld = { fragments: [{ id: 12, x: f.x + 80, z: f.z + 80 }], humans: [] };
+  const r = stepBot(brain, bot, movedWorld);
+  assert.deepEqual([brain.target.x, brain.target.z], [f.x + 80, f.z + 80]);
+  assert.equal(r.claimId, null);
+  // Gone: a new decision is made
+  const before = brain.decisions.length;
+  stepBot(brain, bot, { fragments: [{ id: 30, x: 0, z: 0 }], humans: [] });
+  assert.equal(brain.decisions.length, before + 1);
+});

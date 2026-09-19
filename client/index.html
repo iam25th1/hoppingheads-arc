@@ -6033,6 +6033,8 @@ function connectMultiplayer(){
   });
   // Server round start
   socket.on('round:start',(d)=>{
+    // Online classic: the opponents are the server's bots, in the tick roster. Hide the local NPCs.
+    if(gameMode!=='lbs')for(const e of enemies){if(e.parent)scene.remove(e)}
     // The server issued seed and map. Build the layout from them through the shared module.
     if(d.seed&&typeof d.mapIndex==='number'){applyLayout(HHLayout.createLayout(d.seed,d.mapIndex))}
     document.getElementById('cd-text').textContent='GO!';
@@ -6593,7 +6595,8 @@ function animate(){
   applyKnockback(dt);
 
   // Smart NPCs - behavior depends on game mode
-  for(const e of enemies){
+  // Online classic: the server drives the bots. The local NPCs do nothing here.
+  for(const e of enemies){if(socket&&mpConnected&&gameMode!=='lbs')break;
   // Skip eliminated NPCs in LBS
   if(e._eliminated)continue;
 
@@ -6715,7 +6718,7 @@ function animate(){
   }
 
   // ======= NPC vs NPC COMBAT =======
-  for(let i=0;i<enemies.length;i++){
+  for(let i=0;i<enemies.length;i++){if(socket&&mpConnected&&gameMode!=='lbs')break;
     const a=enemies[i];
     if(a._eliminated)continue;
     // Apply NPC knockback

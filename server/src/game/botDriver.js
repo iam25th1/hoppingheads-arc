@@ -91,7 +91,14 @@ export function decide(brain, bot, world) {
  */
 export function stepBot(brain, bot, world, speed = BOT_SPEED, dt = BOT_TICK_S) {
   dt = Math.max(0, Math.min(MAX_STEP_S, dt));
-  const claimed = brain.target && brain.target.fragId !== null && !world.fragments.some((f) => f.id === brain.target.fragId);
+  // A targeted fragment may have been claimed (gone) or respawned (moved)
+  // since the decision. Follow it where it is now, or decide again.
+  let claimed = false;
+  if (brain.target && brain.target.fragId !== null) {
+    const f = world.fragments.find((x) => x.id === brain.target.fragId);
+    if (!f) claimed = true;
+    else { brain.target.x = f.x; brain.target.z = f.z; }
+  }
   if (!brain.target || brain.wait <= 0 || claimed) decide(brain, bot, world);
   brain.wait--;
 

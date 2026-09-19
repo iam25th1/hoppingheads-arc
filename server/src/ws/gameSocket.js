@@ -7,7 +7,8 @@ import crypto from "crypto";
 import { createRequire } from "module";
 import { query } from "../db/pool.js";
 import { issueRound } from "../game/rounds.js";
-import { createFragState, tryCollect, respawnRarity, FRAG_POINTS, noteCollect, tryMint, MINT_LIMIT } from "../game/lobbyFrags.js";
+import { createFragState, MINT_LIMIT, MINT_DURATIONS, MINT_GRACE_MS } from "../game/lobbyFrags.js";
+import { collectFragment, completeMint, hasMintableChest } from "../game/lobbyActions.js";
 import { lobbyModeFor, rulesFor } from "../game/modes.js";
 import { grantKnockback, judgeMove, MAX_SPEED } from "../game/movement.js";
 import { createSeat, fillWithBots, countSeats, BOT_FILL_TO, DEFAULT_SKINS } from "../game/bots.js";
@@ -108,26 +109,54 @@ function applyMove(p, nx, nz, ry, moving, now) {
   return judged;
 }
 
+/**
+ * Bind lobbyActions' emit to socket.io: with a seat, to that seat's socket
+ * (a bot has none, so nothing is sent); without, to the lobby room.
+ */
+function lobbyEmit(io, lobby) {
+  return (event, payload, seat) => {
+    if (!seat) { io.to(`lobby:${lobby.id}`).emit(event, payload); return; }
+    if (!seat.socketId) return;
+    const s = io.sockets.sockets.get(seat.socketId);
+    if (s) s.emit(event, payload);
+  };
+}
+
 /** Slot n of a bot id, for its stream. */
 function botSlot(id) {
   return Number(id.split(":")[2]);
 }
 
-/** Drive every bot one tick: decide, move through applyMove. */
-function driveBots(lobby, now) {
+/**
+ * Drive every bot one tick: decide, move through applyMove, and claim or
+ * mint through the same validated actions a human's socket events call.
+ */
+function driveBots(io, lobby, now) {
   const dt = lobby.lastTickAt ? (now - lobby.lastTickAt) / 1000 : 0.1;
   lobby.lastTickAt = now;
   if (!lobby.frags) return;
   // The world a bot sees: unclaimed fragments and human positions.
-  const fragments = [];
-  for (const f of lobby.frags.frags.values()) if (f.claimedBy === null) fragments.push({ id: f.id, x: f.x, z: f.z });
+  const snapshot = () => { const out = []; for (const f of lobby.frags.frags.values()) if (f.claimedBy === null) out.push({ id: f.id, x: f.x, z: f.z }); return out; };
   const humans = [];
   for (const p of lobby.players.values()) if (!p.isBot) humans.push({ x: p.x, z: p.z });
-  const world = { fragments, humans };
+  const world = { fragments: snapshot(), humans };
+  const emit = lobbyEmit(io, lobby);
   for (const p of lobby.players.values()) {
     if (!p.isBot || !p.brain) continue;
     const r = stepBot(p.brain, p, world, BOT_SPEED, dt);
     applyMove(p, r.nx, r.nz, r.ry, r.moving, now);
+    // Same path as frag:collected. The judge may have clamped the bot short
+    // of where the driver wanted it; then this is rejected as range, which
+    // is the point: a bot has no side door.
+    if (r.claimId !== null) {
+      const c = collectFragment(lobby, p, r.claimId, emit, now);
+      // Later bots in this tick see the world as it now is
+      if (c.ok) { const i = world.fragments.findIndex((f) => f.id === r.claimId); if (i >= 0) world.fragments.splice(i, 1); }
+    }
+    if (lobby.rules.mints && hasMintableChest(p, now, MINT_DURATIONS, MINT_GRACE_MS)) {
+      // A mint respawns a rarity; later bots in this tick must see the new positions
+      if (completeMint(lobby, p, emit, now).ok) world.fragments = snapshot();
+    }
   }
 }
 
@@ -275,75 +304,19 @@ export function initGameSocket(io) {
     socket.on('frag:collected', ({ id }) => {
       if (!currentLobby || !playerId) return;
       if (!fragLimiter()) return;
-
       const p = currentLobby.players.get(playerId);
       if (!p) return;
-      if (!currentLobby.rules.fragments) {
-        p.rejections.total++; p.rejections.wrong_mode = (p.rejections.wrong_mode || 0) + 1;
-        console.warn(`[MP] REJECT frag:collected ${playerId} wrong_mode lobby=${currentLobby.mode} total=${p.rejections.total}`);
-        socket.emit('frag:rejected', { id, reason: 'wrong_mode' });
-        return;
-      }
-      if (!currentLobby.frags) return; // round not started
-
-      // Second layer, as before: no more fragments than exist on the map
-      if (p.fragCount >= p.maxFrags) return;
-
-      // The server decides. The fragment must exist, be unclaimed, and the
-      // player's server tracked position must be within COLLECT_RANGE of its
-      // authoritative position (lobbyFrags.js). Reject, never clamp, and
-      // tally it: an invisible failed cheat is no use to phase 5.
-      const r = tryCollect(currentLobby.frags, playerId, p, id, p.rejections);
-      if (!r.ok) {
-        console.warn(`[MP] REJECT frag:collected ${playerId} ${r.reason}${r.id !== undefined ? ` id=${r.id}` : ''}${r.dist !== undefined ? ` dist=${r.dist.toFixed(1)}` : ''} total=${p.rejections.total}`);
-        socket.emit('frag:rejected', { id, reason: r.reason });
-        return;
-      }
-      const f = r.fragment;
-      p.fragments[f.rarity]++;
-      p.fragCount++;
-      p.score += FRAG_POINTS;
-      noteCollect(p.mint, f.rarity, Date.now()); // three of a rarity earn a chest, server side
-
-      // Everyone, the collector included: the fragment is gone for all
-      io.to(`lobby:${currentLobby.id}`).emit('frag:taken', { id: f.id, by: playerId, rarity: f.rarity, score: p.score });
+      // The one collection path, shared with bots (lobbyActions.js)
+      collectFragment(currentLobby, p, id, lobbyEmit(io, currentLobby));
     });
 
     socket.on('mint:done', () => {
       if (!currentLobby || !playerId) return;
       if (!mintLimiter()) return;
-
       const p = currentLobby.players.get(playerId);
       if (!p) return;
-      if (!currentLobby.rules.mints) {
-        p.rejections.total++; p.rejections.wrong_mode = (p.rejections.wrong_mode || 0) + 1;
-        console.warn(`[MP] REJECT mint:done ${playerId} wrong_mode lobby=${currentLobby.mode} total=${p.rejections.total}`);
-        socket.emit('mint:rejected', { reason: 'wrong_mode' });
-        return;
-      }
-
-      // The payload is not read. Which chest is minted, and so its rarity and
-      // points, comes from the server's own record of this player's validated
-      // collections (lobbyFrags.js). No chest, too early, or over the cap:
-      // reject and tally.
-      const m = tryMint(p.mint, Date.now(), p.rejections);
-      if (!m.ok) {
-        console.warn(`[MP] REJECT mint:done ${playerId} ${m.reason}${m.rarity !== undefined ? ` rarity=${m.rarity} elapsed=${m.elapsed}` : ''} total=${p.rejections.total}`);
-        socket.emit('mint:rejected', { reason: m.reason });
-        return;
-      }
-      const r = m.rarity;
-      p.minted = m.minted;
-      p.score += m.points;
-
-      io.to(`lobby:${currentLobby.id}`).emit('mint:broadcast', { id:playerId, rarity:r, minted:p.minted, score:p.score });
-
-      // A mint respawns that rarity for everyone, from the round's layout
-      // stream, so every client keeps the same layout after it.
-      if (currentLobby.frags) {
-        const moved = respawnRarity(currentLobby.frags, r);
-        io.to(`lobby:${currentLobby.id}`).emit('frag:respawn', { rarity: r, fragments: moved });
-      }
+      // The one mint path, shared with bots (lobbyActions.js)
+      completeMint(currentLobby, p, lobbyEmit(io, currentLobby));
     });
 
     socket.on('boink', ({ target, myFrags }) => {
@@ -469,7 +442,7 @@ async function startRound(io, lobby) {
 
     const tickNow = Date.now();
     const timeLeft = Math.max(0, lobby.endTime - tickNow);
-    driveBots(lobby, tickNow);
+    driveBots(io, lobby, tickNow);
     const players = [];
     for (const [id, p] of lobby.players) {
       players.push({
