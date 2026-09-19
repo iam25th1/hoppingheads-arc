@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 const layout = require('../../shared/layout.cjs');
 const SEED = '0x' + 'f1'.repeat(32);
 
-function lobby(mode = 'classic') {
+function lobby(mode = 'arena') {
   const l = { mode, rules: rulesFor(mode), frags: createFragState(layout.createLayout(SEED, 2)) };
   const events = [];
   const emit = (event, payload, seat) => events.push({ event, payload, to: seat ? seat.id : 'lobby' });
@@ -68,7 +68,7 @@ test('a bot cannot take a fragment a human already claimed, and vice versa', () 
 });
 
 test('wrong mode and not started behave as before for any seat', () => {
-  const { l, events, emit } = lobby('lbs');
+  const { l, events, emit } = lobby('sandbox-lbs');
   const b = bot();
   assert.equal(collectFragment(l, b, 0, emit).reason, 'wrong_mode');
   assert.equal(events[0].to, b.id);

@@ -3,9 +3,10 @@ import { query } from "../db/pool.js";
 import { verifySessionToken, shortAddress } from "../utils/walletAuth.js";
 import { isHumanId } from "../game/ids.js";
 import { issueRound } from "../game/rounds.js";
+import { SOLO_MODES } from "../game/modes.js";
 import { registerSoloRound, respawnSoloRound } from "../game/soloRounds.js";
 
-const SOLO_MODES = new Set(["classic-solo", "lbs-solo"]);
+const SOLO_MODE_SET = new Set(SOLO_MODES);
 
 const router = Router();
 
@@ -57,7 +58,7 @@ router.get("/leaderboard/recent", async (req, res) => {
 // later closes. A guest gets a seed with no row and cannot score.
 router.post("/round/start", async (req, res) => {
   const mode = req.body?.mode;
-  if (!SOLO_MODES.has(mode)) return res.status(400).json({ error: "Invalid mode" });
+  if (!SOLO_MODE_SET.has(mode)) return res.status(400).json({ error: "Invalid mode" });
   const address = verifySessionToken(req.get("x-session") || req.body?.session);
   try {
     const round = await issueRound({ mode, mapIndex: req.body?.mapIndex, issuedTo: address, persist: !!address });
@@ -104,7 +105,7 @@ router.post("/score", async (req, res) => {
     const round = found.rows[0];
     if (!round) return res.status(404).json({ error: "Unknown round" });
     if (round.issued_to !== address) return res.status(403).json({ error: "Round was not issued to this wallet" });
-    if (round.mode !== "classic-solo") return res.status(400).json({ error: "This round mode does not score" });
+    if (round.mode !== "sandbox-classic-solo") return res.status(400).json({ error: "This round mode does not score" });
     if (round.status !== "active") return res.status(409).json({ error: "Round already closed" });
 
     const safeScore = Math.max(0, Math.min(99999, Math.floor(score)));

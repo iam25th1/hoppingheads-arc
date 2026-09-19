@@ -14,7 +14,7 @@ import { grantKnockback, judgeMove, BASE_SPEED, BOOST_SPEED } from "../game/move
 import { createSeat, fillWithBots, countSeats, BOT_FILL_TO, DEFAULT_SKINS } from "../game/bots.js";
 import { createBotBrain, stepBot, BOT_SPEED } from "../game/botDriver.js";
 import { createPowerupState, spawnIfDue, expire, pickups, hasEffect } from "../game/powerups.js";
-import { isBotId } from "../game/ids.js";
+import { isBotId, isHumanId, guestId } from "../game/ids.js";
 
 const require = createRequire(import.meta.url);
 const layoutModule = require("../../../shared/layout.cjs");
@@ -203,28 +203,33 @@ export function initGameSocket(io) {
       // Prevent double-join
       if (hasJoined) return;
 
-      // WALLET GATE: the session token was issued to a recovered signer
+      // WALLET GATE. The arena needs a verified wallet. A sandbox lobby seats
+      // a guest under a random guest id, which can never be an address, so
+      // nothing it writes can ever be paid.
+      const lobbyMode = lobbyModeFor(mode);
+      const rules = rulesFor(lobbyMode);
       const address = verifySessionToken(session);
-      if (!address) {
-        socket.emit('auth:denied', { reason: 'Connect a wallet first.' });
+      if (!address && !rules.guests) {
+        socket.emit('auth:denied', { reason: 'Connect a wallet to enter the arena.' });
         return;
       }
-      // One seat per address across live lobbies
-      for (const l of lobbies.values()) {
-        if (l.status !== 'ended' && l.players.has(address)) {
-          socket.emit('auth:denied', { reason: 'This wallet is already in a lobby.' });
-          return;
+      if (address) {
+        // One seat per address across live lobbies
+        for (const l of lobbies.values()) {
+          if (l.status !== 'ended' && l.players.has(address)) {
+            socket.emit('auth:denied', { reason: 'This wallet is already in a lobby.' });
+            return;
+          }
         }
       }
       verifiedUser = address;
       hasJoined = true;
 
-      // Identity is the recovered address (ignore client-supplied name)
-      const pName = shortAddress(address);
-      playerId = address;
+      // Identity is the recovered address, or a guest id in the sandbox. Never the client name.
+      playerId = address || guestId(crypto.randomBytes(8).toString('hex'));
+      const pName = address ? shortAddress(address) : 'GUEST';
 
       // Lobbies are per mode. The server selects the ruleset; the client only asks.
-      const lobbyMode = lobbyModeFor(mode);
       let lobby = findOpenLobby(lobbyMode);
       if (!lobby) lobby = createLobby(lobbyMode);
 
@@ -385,6 +390,7 @@ export function initGameSocket(io) {
       // No humans left: tear the lobby down. Bots never leave on their own,
       // so a size check alone would keep a bot only round running to the end.
       if (countSeats(currentLobby.players).humans === 0) {
+        if (currentLobby.waitTickInterval) clearInterval(currentLobby.waitTickInterval); // or an empty lobby counts down and plays alone
         if (currentLobby.tickInterval) clearInterval(currentLobby.tickInterval);
         if (currentLobby.countdownInterval) clearInterval(currentLobby.countdownInterval);
         if (currentLobby.autoStartTimer) clearTimeout(currentLobby.autoStartTimer);
@@ -408,7 +414,7 @@ async function beginCountdown(io, lobby) {
   if (lobby.waitTickInterval) { clearInterval(lobby.waitTickInterval); lobby.waitTickInterval = null; }
   // The seed is issued here, at countdown, so bot ids can carry the run's
   // seed prefix (ids.js). It reaches clients on round:start as before.
-  const round = await issueRound({ mode: lobby.rules.roundMode, mapIndex: lobby.mapIndex, maxPlayers: MAX_PLAYERS, durationSecs: ROUND_DURATION });
+  const round = await issueRound({ mode: lobby.rules.roundMode, mapIndex: lobby.mapIndex, maxPlayers: MAX_PLAYERS, durationSecs: ROUND_DURATION, stakeable: lobby.rules.stakeable });
   lobby.seed = round.seed;
   lobby.roundId = round.id;
   // Fill empty seats with bots. They join the roster like anyone else.
@@ -528,9 +534,9 @@ async function saveResults(results, lobby) {
     );
   } else {
     const round = await query(
-      `INSERT INTO rounds (mode, map_index, seed, status, max_players, duration_secs, start_time, end_time, winner)
-       VALUES ($8, $1, $2, 'completed', $3, $4, to_timestamp($5 / 1000.0), to_timestamp($6 / 1000.0), $7) RETURNING id`,
-      [lobby.mapIndex, lobby.seed, MAX_PLAYERS, ROUND_DURATION, lobby.startTime, lobby.endTime, results[0]?.id ?? null, lobby.rules.roundMode]
+      `INSERT INTO rounds (mode, map_index, seed, status, max_players, duration_secs, start_time, end_time, winner, stakeable)
+       VALUES ($8, $1, $2, 'completed', $3, $4, to_timestamp($5 / 1000.0), to_timestamp($6 / 1000.0), $7, $9) RETURNING id`,
+      [lobby.mapIndex, lobby.seed, MAX_PLAYERS, ROUND_DURATION, lobby.startTime, lobby.endTime, results[0]?.id ?? null, lobby.rules.roundMode, lobby.rules.stakeable === true]
     );
     roundId = round.rows[0].id;
   }
@@ -543,7 +549,7 @@ async function saveResults(results, lobby) {
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [roundId, r.id, isBot, r.score, r.minted, r.fragments, r.placement]
     );
-    if (isBot) continue; // stats are for wallets
+    if (!isHumanId(r.id)) continue; // stats are for wallets: not bots, not guests
     await query(
       `INSERT INTO player_stats (address, total_score, total_wins, total_rounds, total_minted, best_score)
        VALUES ($1, $2, $3, 1, $4, $5)

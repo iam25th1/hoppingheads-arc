@@ -6,7 +6,7 @@ import { registerSoloRound, respawnSoloRound, ROUND_TTL_MS } from '../src/game/s
 const require = createRequire(import.meta.url);
 const layout = require('../../shared/layout.cjs');
 const SEED = '0x' + 'd7'.repeat(32);
-const round = { id: 1, seed: SEED, mapIndex: 2, mode: 'classic-solo' };
+const round = { id: 1, seed: SEED, mapIndex: 2, mode: 'sandbox-classic-solo' };
 
 test('register returns a 32 hex key, distinct per round', () => {
   const a = registerSoloRound(round);
