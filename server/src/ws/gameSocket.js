@@ -7,9 +7,14 @@ import crypto from "crypto";
 import { createRequire } from "module";
 import { query } from "../db/pool.js";
 import { issueRound } from "../game/rounds.js";
-import { createFragState, createRejections, tryCollect, respawnRarity, FRAG_POINTS, createMintState, noteCollect, tryMint, MINT_LIMIT } from "../game/lobbyFrags.js";
+import { createFragState, MINT_LIMIT, MINT_DURATIONS, MINT_GRACE_MS } from "../game/lobbyFrags.js";
+import { collectFragment, completeMint, hasMintableChest } from "../game/lobbyActions.js";
 import { lobbyModeFor, rulesFor } from "../game/modes.js";
-import { createMoveState, grantKnockback, judgeMove, MAX_SPEED } from "../game/movement.js";
+import { grantKnockback, judgeMove, BASE_SPEED, BOOST_SPEED } from "../game/movement.js";
+import { createSeat, fillWithBots, countSeats, BOT_FILL_TO, DEFAULT_SKINS } from "../game/bots.js";
+import { createBotBrain, stepBot, BOT_SPEED } from "../game/botDriver.js";
+import { createPowerupState, spawnIfDue, expire, pickups, hasEffect } from "../game/powerups.js";
+import { isBotId } from "../game/ids.js";
 
 const require = createRequire(import.meta.url);
 const layoutModule = require("../../../shared/layout.cjs");
@@ -18,8 +23,8 @@ import { verifySessionToken, shortAddress } from "../utils/walletAuth.js";
 const TICK_RATE = 100;
 const MAX_PLAYERS = 8;
 const MIN_PLAYERS = 2;
-const ROUND_DURATION = 180;
-const LOBBY_WAIT_TIME = 30; // seconds to wait before starting with fewer than 8
+const ROUND_DURATION = Number(process.env.ROUND_SECONDS) || 180;   // env override for tests only
+const LOBBY_WAIT_TIME = Number(process.env.LOBBY_WAIT_SECONDS) || 30; // seconds to wait before starting with fewer than 8
 const MAP_HALF = 150; // MAP/2
 
 // Allowed skin values (whitelist)
@@ -32,13 +37,6 @@ const VALID_EYES = ['X','Dots','Slit','Open',
 const VALID_HEADS = ['Horns','Crown','Antenna','Spike','Ears',
   // Premium store headwear
   'Halo','TopHat','Beanie','Mohawk','Propeller','Mushroom','FlameCrown'];
-const DEFAULT_SKINS = [
-  {skinColor:0xff8866,eyeStyle:'X',headStyle:'Horns'},
-  {skinColor:0xaadd55,eyeStyle:'Dots',headStyle:'Crown'},
-  {skinColor:0xaa88dd,eyeStyle:'Slit',headStyle:'Antenna'},
-  {skinColor:0x88bbcc,eyeStyle:'Open',headStyle:'Spike'},
-  {skinColor:0xddcc55,eyeStyle:'X',headStyle:'Ears'},
-];
 
 // Rate limiter per socket
 function createRateLimiter(maxPerSec) {
@@ -84,6 +82,101 @@ function createLobby(mode) {
   };
   lobbies.set(id, lobby);
   return lobby;
+}
+
+/**
+ * The one movement path. A human's pos update and a bot's tick both land
+ * here: the ceiling is computed from the seat, the move is judged over the
+ * window with knockback as a budget (movement.js), overspeed is clamped and
+ * counted, never ejected. Logged on the first three flags and every fiftieth
+ * after, so a real cheat cannot flood the log.
+ */
+function applyMove(p, nx, nz, ry, moving, now) {
+  // The cap is per seat: base speed, or the boosted speed only while the
+  // server's own powerup record says this seat is boosted. Grow slows a
+  // player (mirrors client GROW_PER_FRAG and SPEED_PENALTY_MAX).
+  const cap = hasEffect(p, 'speed', now) ? BOOST_SPEED : BASE_SPEED;
+  const growFactor = Math.min(1, (p.fragCount * 0.022) / 1.2);
+  const adjustedMaxSpeed = cap * (1 - growFactor * 0.45);
+  const judged = judgeMove(p.move, nx, nz, now, adjustedMaxSpeed);
+  if (judged.flagged) {
+    p.violations.move++;
+    if (p.violations.move <= 3 || p.violations.move % 50 === 0) {
+      console.warn(`[MP] FLAG pos ${p.id} path ${judged.path.toFixed(1)} over ${judged.spanMs}ms, allowed ${judged.allowance.toFixed(1)}, step ${judged.step.toFixed(1)} (count ${p.violations.move})`);
+    }
+  }
+  p.x = judged.x;
+  p.z = judged.z;
+  p.y = 0; // Y is always 0 (flat ground - LOCKED)
+  p.ry = ry;
+  p.moving = moving;
+  return judged;
+}
+
+/**
+ * Bind lobbyActions' emit to socket.io: with a seat, to that seat's socket
+ * (a bot has none, so nothing is sent); without, to the lobby room.
+ */
+function lobbyEmit(io, lobby) {
+  return (event, payload, seat) => {
+    if (!seat) { io.to(`lobby:${lobby.id}`).emit(event, payload); return; }
+    if (!seat.socketId) return;
+    const s = io.sockets.sockets.get(seat.socketId);
+    if (s) s.emit(event, payload);
+  };
+}
+
+/**
+ * Powerups on the tick: spawn when due, expire, and award pickups by the
+ * server's own tracked positions, bots included. No claim event exists.
+ */
+function tickPowerups(io, lobby, now) {
+  const st = lobby.powerups;
+  if (!st) return;
+  const pw = spawnIfDue(st, now);
+  if (pw) io.to(`lobby:${lobby.id}`).emit('pw:spawn', { id: pw.id, type: pw.type, x: pw.x, z: pw.z });
+  for (const id of expire(st, now)) io.to(`lobby:${lobby.id}`).emit('pw:expire', { id });
+  for (const t of pickups(st, [...lobby.players.values()], now)) io.to(`lobby:${lobby.id}`).emit('pw:taken', t);
+}
+
+/** Slot n of a bot id, for its stream. */
+function botSlot(id) {
+  return Number(id.split(":")[2]);
+}
+
+/**
+ * Drive every bot one tick: decide, move through applyMove, and claim or
+ * mint through the same validated actions a human's socket events call.
+ */
+function driveBots(io, lobby, now) {
+  const dt = lobby.lastTickAt ? (now - lobby.lastTickAt) / 1000 : 0.1;
+  lobby.lastTickAt = now;
+  if (!lobby.frags) return;
+  // The world a bot sees: unclaimed fragments and human positions.
+  const snapshot = () => { const out = []; for (const f of lobby.frags.frags.values()) if (f.claimedBy === null) out.push({ id: f.id, x: f.x, z: f.z }); return out; };
+  const humans = [];
+  for (const p of lobby.players.values()) if (!p.isBot) humans.push({ x: p.x, z: p.z });
+  const world = { fragments: snapshot(), humans };
+  const emit = lobbyEmit(io, lobby);
+  for (const p of lobby.players.values()) {
+    if (!p.isBot || !p.brain) continue;
+    // A bot the server knows is boosted runs at the boosted speed, like a human would
+    const speed = hasEffect(p, 'speed', now) ? BOT_SPEED * 2 : BOT_SPEED;
+    const r = stepBot(p.brain, p, world, speed, dt);
+    applyMove(p, r.nx, r.nz, r.ry, r.moving, now);
+    // Same path as frag:collected. The judge may have clamped the bot short
+    // of where the driver wanted it; then this is rejected as range, which
+    // is the point: a bot has no side door.
+    if (r.claimId !== null) {
+      const c = collectFragment(lobby, p, r.claimId, emit, now);
+      // Later bots in this tick see the world as it now is
+      if (c.ok) { const i = world.fragments.findIndex((f) => f.id === r.claimId); if (i >= 0) world.fragments.splice(i, 1); }
+    }
+    if (lobby.rules.mints && hasMintableChest(p, now, MINT_DURATIONS, MINT_GRACE_MS)) {
+      // A mint respawns a rarity; later bots in this tick must see the new positions
+      if (completeMint(lobby, p, emit, now).ok) world.fragments = snapshot();
+    }
+  }
 }
 
 function findOpenLobby(mode) {
@@ -151,19 +244,12 @@ export function initGameSocket(io) {
         }
       }
 
-      lobby.players.set(playerId, {
-        id: playerId, socketId: socket.id, name: pName,
-        address,
-        x:0, y:0, z:0, ry:0, score:0,
-        fragments:[0,0,0,0,0], minted:0, moving:false,
-        appearance, cosmeticExtras, index: playerIndex,
-        fragCount:0, maxFrags:48, shadow:0,
-        maxMints:MINT_LIMIT, boinkCd:0,
-        mint: createMintState(), // chests earned from validated collections; the only mint record
-        rejections: createRejections(), // per reason tally of refused claims, logged at round end
-        violations: { move: 0 }, // movement clamps, same idea: clamp for latency, count for phase 5
-        move: createMoveState(), // window judged speed and the knockback budget (movement.js)
-      });
+      // One seat shape for humans and bots (bots.js). cosmeticExtras is
+      // always {} since phase 0; kept on the seat for the joined payload.
+      lobby.players.set(playerId, createSeat({
+        id: playerId, socketId: socket.id, name: pName, address, appearance, index: playerIndex,
+        isBot: false, maxMints: MINT_LIMIT,
+      }));
 
       currentLobby = lobby;
       socket.join(`lobby:${lobby.id}`);
@@ -188,10 +274,11 @@ export function initGameSocket(io) {
         if (lobby.waitTickInterval) { clearInterval(lobby.waitTickInterval); lobby.waitTickInterval = null; }
         if (lobby.autoStartTimer) { clearTimeout(lobby.autoStartTimer); lobby.autoStartTimer = null; }
         io.to(`lobby:${lobby.id}`).emit('lobby:full');
-        beginCountdown(io, lobby);
+        beginCountdown(io, lobby).catch((e) => console.error('[MP] Countdown failed:', e.message));
       }
-      // First 2+ players: start 2-min wait countdown
-      else if (lobby.players.size >= MIN_PLAYERS && !lobby.waitStartedAt && lobby.status === 'waiting') {
+      // Enough to start a wait: MIN_PLAYERS humans, or a single human when the
+      // mode fills empty seats with bots at countdown.
+      else if (lobby.players.size >= (lobby.rules.bots ? 1 : MIN_PLAYERS) && !lobby.waitStartedAt && lobby.status === 'waiting') {
         lobby.waitStartedAt = Date.now();
         io.to(`lobby:${lobby.id}`).emit('auto:starting', { seconds: LOBBY_WAIT_TIME });
 
@@ -204,7 +291,7 @@ export function initGameSocket(io) {
           if (remaining <= 0) {
             clearInterval(lobby.waitTickInterval);
             lobby.waitTickInterval = null;
-            beginCountdown(io, lobby);
+            beginCountdown(io, lobby).catch((e) => console.error('[MP] Countdown failed:', e.message));
           }
         }, 1000);
       }
@@ -230,103 +317,25 @@ export function initGameSocket(io) {
       // Track shadow state (0 or 1)
       p.shadow = (sh === 1) ? 1 : 0;
 
-      // Anti-teleport: adjust max speed based on grow (more frags = slower)
-      const growFactor = Math.min(1, (p.fragCount * 0.022) / 1.2); // mirrors client GROW_PER_FRAG
-      const adjustedMaxSpeed = MAX_SPEED * (1 - growFactor * 0.45); // mirrors SPEED_PENALTY_MAX
-
-      // Speed is judged over a short window of history against the ceiling,
-      // with knockback as a budget the boink handler grants (movement.js).
-      // Overspeed is clamped, never ejected, and counted: a sustained hack
-      // flags on every update once the window fills. Logged on the first
-      // three and every fiftieth after, so a real cheat cannot flood the log.
-      const now = Date.now();
-      const judged = judgeMove(p.move, nx, nz, now, adjustedMaxSpeed);
-      if (judged.flagged) {
-        p.violations.move++;
-        if (p.violations.move <= 3 || p.violations.move % 50 === 0) {
-          console.warn(`[MP] FLAG pos ${playerId} path ${judged.path.toFixed(1)} over ${judged.spanMs}ms, allowed ${judged.allowance.toFixed(1)}, step ${judged.step.toFixed(1)} (count ${p.violations.move})`);
-        }
-      }
-      p.x = judged.x;
-      p.z = judged.z;
-
-      p.y = 0; // Y is always 0 (flat ground - LOCKED)
-      p.ry = nry;
-      p.moving = !!moving;
+      applyMove(p, nx, nz, nry, !!moving, Date.now());
     });
 
     socket.on('frag:collected', ({ id }) => {
       if (!currentLobby || !playerId) return;
       if (!fragLimiter()) return;
-
       const p = currentLobby.players.get(playerId);
       if (!p) return;
-      if (!currentLobby.rules.fragments) {
-        p.rejections.total++; p.rejections.wrong_mode = (p.rejections.wrong_mode || 0) + 1;
-        console.warn(`[MP] REJECT frag:collected ${playerId} wrong_mode lobby=${currentLobby.mode} total=${p.rejections.total}`);
-        socket.emit('frag:rejected', { id, reason: 'wrong_mode' });
-        return;
-      }
-      if (!currentLobby.frags) return; // round not started
-
-      // Second layer, as before: no more fragments than exist on the map
-      if (p.fragCount >= p.maxFrags) return;
-
-      // The server decides. The fragment must exist, be unclaimed, and the
-      // player's server tracked position must be within COLLECT_RANGE of its
-      // authoritative position (lobbyFrags.js). Reject, never clamp, and
-      // tally it: an invisible failed cheat is no use to phase 5.
-      const r = tryCollect(currentLobby.frags, playerId, p, id, p.rejections);
-      if (!r.ok) {
-        console.warn(`[MP] REJECT frag:collected ${playerId} ${r.reason}${r.id !== undefined ? ` id=${r.id}` : ''}${r.dist !== undefined ? ` dist=${r.dist.toFixed(1)}` : ''} total=${p.rejections.total}`);
-        socket.emit('frag:rejected', { id, reason: r.reason });
-        return;
-      }
-      const f = r.fragment;
-      p.fragments[f.rarity]++;
-      p.fragCount++;
-      p.score += FRAG_POINTS;
-      noteCollect(p.mint, f.rarity, Date.now()); // three of a rarity earn a chest, server side
-
-      // Everyone, the collector included: the fragment is gone for all
-      io.to(`lobby:${currentLobby.id}`).emit('frag:taken', { id: f.id, by: playerId, rarity: f.rarity, score: p.score });
+      // The one collection path, shared with bots (lobbyActions.js)
+      collectFragment(currentLobby, p, id, lobbyEmit(io, currentLobby));
     });
 
     socket.on('mint:done', () => {
       if (!currentLobby || !playerId) return;
       if (!mintLimiter()) return;
-
       const p = currentLobby.players.get(playerId);
       if (!p) return;
-      if (!currentLobby.rules.mints) {
-        p.rejections.total++; p.rejections.wrong_mode = (p.rejections.wrong_mode || 0) + 1;
-        console.warn(`[MP] REJECT mint:done ${playerId} wrong_mode lobby=${currentLobby.mode} total=${p.rejections.total}`);
-        socket.emit('mint:rejected', { reason: 'wrong_mode' });
-        return;
-      }
-
-      // The payload is not read. Which chest is minted, and so its rarity and
-      // points, comes from the server's own record of this player's validated
-      // collections (lobbyFrags.js). No chest, too early, or over the cap:
-      // reject and tally.
-      const m = tryMint(p.mint, Date.now(), p.rejections);
-      if (!m.ok) {
-        console.warn(`[MP] REJECT mint:done ${playerId} ${m.reason}${m.rarity !== undefined ? ` rarity=${m.rarity} elapsed=${m.elapsed}` : ''} total=${p.rejections.total}`);
-        socket.emit('mint:rejected', { reason: m.reason });
-        return;
-      }
-      const r = m.rarity;
-      p.minted = m.minted;
-      p.score += m.points;
-
-      io.to(`lobby:${currentLobby.id}`).emit('mint:broadcast', { id:playerId, rarity:r, minted:p.minted, score:p.score });
-
-      // A mint respawns that rarity for everyone, from the round's layout
-      // stream, so every client keeps the same layout after it.
-      if (currentLobby.frags) {
-        const moved = respawnRarity(currentLobby.frags, r);
-        io.to(`lobby:${currentLobby.id}`).emit('frag:respawn', { rarity: r, fragments: moved });
-      }
+      // The one mint path, shared with bots (lobbyActions.js)
+      completeMint(currentLobby, p, lobbyEmit(io, currentLobby));
     });
 
     socket.on('boink', ({ target, myFrags }) => {
@@ -373,7 +382,9 @@ export function initGameSocket(io) {
         io.to(`lobby:${currentLobby.id}`).emit('auto:cancelled');
       }
 
-      if (currentLobby.players.size === 0) {
+      // No humans left: tear the lobby down. Bots never leave on their own,
+      // so a size check alone would keep a bot only round running to the end.
+      if (countSeats(currentLobby.players).humans === 0) {
         if (currentLobby.tickInterval) clearInterval(currentLobby.tickInterval);
         if (currentLobby.countdownInterval) clearInterval(currentLobby.countdownInterval);
         if (currentLobby.autoStartTimer) clearTimeout(currentLobby.autoStartTimer);
@@ -392,9 +403,22 @@ export function initGameSocket(io) {
   }, 60000);
 }
 
-function beginCountdown(io, lobby) {
+async function beginCountdown(io, lobby) {
   lobby.status = 'countdown';
   if (lobby.waitTickInterval) { clearInterval(lobby.waitTickInterval); lobby.waitTickInterval = null; }
+  // The seed is issued here, at countdown, so bot ids can carry the run's
+  // seed prefix (ids.js). It reaches clients on round:start as before.
+  const round = await issueRound({ mode: lobby.rules.roundMode, mapIndex: lobby.mapIndex, maxPlayers: MAX_PLAYERS, durationSecs: ROUND_DURATION });
+  lobby.seed = round.seed;
+  lobby.roundId = round.id;
+  // Fill empty seats with bots. They join the roster like anyone else.
+  if (lobby.rules.bots && lobby.players.size < BOT_FILL_TO) {
+    for (const bot of fillWithBots(lobby, lobby.seed, BOT_FILL_TO, MAX_PLAYERS, MINT_LIMIT)) {
+      io.to(`lobby:${lobby.id}`).emit('player:joined', { id: bot.id, name: bot.name, appearance: bot.appearance, extras: {}, count: lobby.players.size });
+    }
+    const c = countSeats(lobby.players);
+    console.log(`[MP] Lobby ${lobby.id} filled with ${c.bots} bot(s) alongside ${c.humans} human(s)`);
+  }
   let count = 3;
   io.to(`lobby:${lobby.id}`).emit('countdown', { count });
   lobby.countdownInterval = setInterval(() => {
@@ -409,16 +433,19 @@ function beginCountdown(io, lobby) {
 }
 
 async function startRound(io, lobby) {
-  // The seed is issued here, on the server, and written to the round row
-  // before any client sees it. The client builds the fragment layout from
-  // exactly what this emits, through the same shared module the lobby uses.
-  const round = await issueRound({ mode: lobby.rules.roundMode, mapIndex: lobby.mapIndex, maxPlayers: MAX_PLAYERS, durationSecs: ROUND_DURATION });
-  lobby.seed = round.seed;
-  lobby.roundId = round.id;
+  // The seed was issued at countdown and written to the round row before any
+  // client saw it. The client builds the fragment layout from exactly what
+  // this emits, through the same shared module the lobby uses.
+  if (!lobby.seed) throw new Error('startRound before the seed was issued');
   // The lobby holds the fragment state for the round, built from the same
   // shared module the client uses, so both sides agree on every position.
   // A mode without fragments holds none, and any claim is wrong_mode.
   lobby.frags = lobby.rules.fragments ? createFragState(layoutModule.createLayout(lobby.seed, lobby.mapIndex)) : null;
+  // Every bot gets a brain: a stream derived from the round seed and its slot.
+  for (const p of lobby.players.values()) if (p.isBot) p.brain = createBotBrain(lobby.seed, botSlot(p.id));
+  lobby.lastTickAt = null;
+  // Powerups: schedule, type and position off the seed; pickups by proximity on the tick
+  lobby.powerups = lobby.rules.powerups ? createPowerupState(lobby.seed, lobby.mapIndex, Date.now()) : null; // now, not lobby.startTime, which is set further down
 
   lobby.status = 'active';
   lobby.startTime = Date.now();
@@ -434,7 +461,10 @@ async function startRound(io, lobby) {
   lobby.tickInterval = setInterval(() => {
     if (lobby.status !== 'active') { clearInterval(lobby.tickInterval); return; }
 
-    const timeLeft = Math.max(0, lobby.endTime - Date.now());
+    const tickNow = Date.now();
+    const timeLeft = Math.max(0, lobby.endTime - tickNow);
+    driveBots(io, lobby, tickNow);
+    tickPowerups(io, lobby, tickNow);
     const players = [];
     for (const [id, p] of lobby.players) {
       players.push({
@@ -507,11 +537,13 @@ async function saveResults(results, lobby) {
   for (const r of results) {
     // r.id is the recovered address. Every seat written here is human;
     // a bot seat would carry a bot id and is_bot true (see game/ids.js).
+    const isBot = isBotId(r.id);
     await query(
       `INSERT INTO round_results (round_id, participant, is_bot, score, minted, fragments, placement)
-       VALUES ($1, $2, false, $3, $4, $5, $6)`,
-      [roundId, r.id, r.score, r.minted, r.fragments, r.placement]
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [roundId, r.id, isBot, r.score, r.minted, r.fragments, r.placement]
     );
+    if (isBot) continue; // stats are for wallets
     await query(
       `INSERT INTO player_stats (address, total_score, total_wins, total_rounds, total_minted, best_score)
        VALUES ($1, $2, $3, 1, $4, $5)

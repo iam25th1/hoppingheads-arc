@@ -27,11 +27,10 @@
  *      margin. A hit moves a player at 15 units a second for up to 0.5s
  *      (client applyKnockback), so 8 units covers it with room.
  *
- *   3. The cap is the real ceiling. The client's speed powerup doubles SPD
- *      (18) to 36, and the server cannot see powerups, so MAX_SPEED is 36.
- *      That is the honest limit of this check: a hack at or under 2x is
- *      indistinguishable from a boosted player until powerups are server
- *      side. Anything above 2x is caught within one window.
+ *   3. The cap is per seat. BASE_SPEED (18, the client's SPD) for anyone,
+ *      BOOST_SPEED (36) only while the server's own powerup record says the
+ *      seat is boosted. The caller passes the cap; this file does not know
+ *      about powerups. Anything above the cap is caught within one window.
  *
  * Overspeed is clamped, never ejected: the server position moves only as far
  * as the window allowance permits, and the flag is counted. A sustained hack
@@ -40,12 +39,17 @@
  * collection range check then sees.
  */
 
-export const MAX_SPEED = 36; // SPD 18 times the 2x speed powerup; the server cannot see powerups
+export const BASE_SPEED = 18; // the client's SPD
+export const BOOST_SPEED = 36; // SPD times the 2x speed powerup, only while the server knows the seat is boosted
+export const MAX_SPEED = BOOST_SPEED; // kept for callers that only know the ceiling
 export const MOVE_WINDOW_MS = 600; // speed is judged over this much history
 export const KNOCKBACK_UNITS = 8; // 15 units a second for up to 0.5s, plus room
 export const KNOCKBACK_WINDOW_MS = 700; // must be spent within this after the hit
 export const MIN_STEP_MS = 16;
-export const WINDOW_TOLERANCE = 0.01; // units, per window, for floating point at the cap
+// Per window, not per update. Covers floating point at the cap and the
+// client rounding positions to 0.1 before sending (up to 0.05 per update,
+// about ten updates a window). It does not grow with update rate.
+export const WINDOW_TOLERANCE = 0.5;
 
 export function createMoveState(x = 0, z = 0) {
   return { x, z, lastAt: 0, samples: [], knockback: null };

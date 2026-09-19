@@ -6,6 +6,7 @@ Phase records:
 
 - [docs/phase0-strip.md](docs/phase0-strip.md): the fork stood up, stripped, wallet gate, schema.
 - [docs/phase1-world.md](docs/phase1-world.md): the server owns the world. Seeds, the shared layout module, collection and mint validation, modes, movement flags, and what is still client side.
+- [docs/phase2-bots.md](docs/phase2-bots.md): server side bots and powerups. Bot seats and driver, the shared collection and mint actions, the powerup authority model, the per seat speed cap.
 
 ## Run it
 
@@ -39,6 +40,8 @@ client/index.html        the game, one file, served at /game
 server/src/index.js      express + socket.io entry
 server/src/ws/           lobby, tick, boink proximity check
 server/src/game/         rounds (seed issuance), lobbyFrags (fragment state, collection and mint rules),
+                         lobbyActions (the collection and mint paths, human or bot), bots and
+                         botDriver (seats and the tick driver), powerups, movement (speed judge),
                          modes, mapGenerator, collection rules reference, participant ids
 shared/                  prng, layout, mapObstacles: one copy, loaded by server and client
 scripts/extract-obstacles.mjs

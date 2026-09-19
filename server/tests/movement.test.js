@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createMoveState, grantKnockback, judgeMove, MAX_SPEED, KNOCKBACK_UNITS, MOVE_WINDOW_MS } from '../src/game/movement.js';
+import { createMoveState, grantKnockback, judgeMove, MAX_SPEED, BASE_SPEED, BOOST_SPEED, KNOCKBACK_UNITS, MOVE_WINDOW_MS } from '../src/game/movement.js';
 
 const SPD = 18; // the client's base speed
 const TICK = 70; // client sends every ~66ms; 70 leaves a little slack
@@ -26,10 +26,23 @@ test('honest walking at base speed never flags', () => {
   assert.deepEqual(flags, []);
 });
 
-test('a speed powerup (2x base) never flags: the server cannot see powerups, so 36 is the cap', () => {
-  const { flags, state, reported } = run(SPD * 2, 60);
+test('a server known boost (2x base) never flags under the boosted cap', () => {
+  const { flags, state, reported } = run(SPD * 2, 60, { maxSpeed: BOOST_SPEED });
   assert.deepEqual(flags, []);
   assert.ok(Math.abs(state.x - reported) < 1e-9, 'server position tracks the client exactly');
+});
+
+test('an unboosted player at 1.5x flags under the base cap; at 1.0x with 0.1 rounding it does not', () => {
+  assert.ok(run(SPD * 1.5, 60, { maxSpeed: BASE_SPEED }).flags.length >= 50);
+  // Honest client: positions rounded to 0.1 before sending
+  const s = createMoveState();
+  let t = 1000, x = 0, flags = 0;
+  for (let i = 0; i < 120; i++) { t += TICK; x += SPD * TICK / 1000; if (judgeMove(s, Math.round(x * 10) / 10, 0, t, BASE_SPEED).flagged) flags++; }
+  assert.equal(flags, 0);
+});
+
+test('an unboosted player at 2x flags under the base cap', () => {
+  assert.ok(run(SPD * 2, 60, { maxSpeed: BASE_SPEED }).flags.length >= 50);
 });
 
 test('a continuous 2.4x run over 60 updates flags, and the server position falls behind', () => {
@@ -65,10 +78,10 @@ test('the knockback budget is spent once, not reapplied', () => {
   const { t } = run(SPD, 5, { state: s });
   grantKnockback(s, t);
   // Spend it all in one step, then keep overspeeding: only the first step is covered.
-  const r1 = judgeMove(s, s.x + (SPD * TICK / 1000) + KNOCKBACK_UNITS, 0, t + TICK, MAX_SPEED);
+  const r1 = judgeMove(s, s.x + (SPD * TICK / 1000) + KNOCKBACK_UNITS, 0, t + TICK, BASE_SPEED);
   assert.equal(r1.flagged, false);
   assert.ok(r1.credit > 0);
-  const r2 = judgeMove(s, s.x + (SPD * TICK / 1000) + KNOCKBACK_UNITS, 0, t + 2 * TICK, MAX_SPEED);
+  const r2 = judgeMove(s, s.x + (SPD * TICK / 1000) + KNOCKBACK_UNITS, 0, t + 2 * TICK, BASE_SPEED);
   assert.equal(r2.flagged, true, 'the budget does not refill');
 });
 
@@ -89,12 +102,11 @@ test('a grown player is held to the reduced ceiling', () => {
   assert.ok(run(reduced * 1.2, 60, { maxSpeed: reduced }).flags.length > 40);
 });
 
-test('threshold: flagging begins just above 2.0x base speed', () => {
-  let first = null;
-  for (let m = 1.0; m <= 3.0; m = +(m + 0.05).toFixed(2)) {
-    if (run(SPD * m, 60).flags.length > 0) { first = m; break; }
-  }
-  assert.ok(first > 2.0 && first <= 2.1, `first flagging multiplier ${first}`);
+test('threshold: unboosted flagging begins just above 1.0x, boosted just above 2.0x', () => {
+  const firstFlag = (cap) => { for (let m = 1.0; m <= 3.0; m = +(m + 0.01).toFixed(2)) { if (run(SPD * m, 60, { maxSpeed: cap }).flags.length > 0) return m; } return null; };
+  const base = firstFlag(BASE_SPEED), boost = firstFlag(BOOST_SPEED);
+  assert.ok(base > 1.0 && base <= 1.1, `unboosted first flagging multiplier ${base}`);
+  assert.ok(boost > 2.0 && boost <= 2.1, `boosted first flagging multiplier ${boost}`);
 });
 
 test('first update is accepted as is', () => {
