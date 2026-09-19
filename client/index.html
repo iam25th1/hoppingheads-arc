@@ -2190,7 +2190,8 @@ function switchMapInPlace(newIdx){
     scene.add(e);
   }
   // Fragment positions from the shared layout (placeholder seed until round start issues one)
-  applyLayout(HHLayout.createLayout(SOLO_PLACEHOLDER_SEED,mapIdx));
+  // A rebuild of the map a round is already playing on keeps that round's layout.
+  applyLayout(currentLayout&&currentLayout.mapIndex===mapIdx?currentLayout:HHLayout.createLayout(SOLO_PLACEHOLDER_SEED,mapIdx));
   // Rebuild arcade cabinet
   if(arcadeCab){arcadeCab=null}
   arcadeCab=buildArcadeCab();arcadeCab.position.set(0,0,0);scene.add(arcadeCab);
@@ -2641,7 +2642,7 @@ function placeFragment(f,lf){f.x=lf.x;f.z=lf.z;f.mesh.position.set(lf.x,0,lf.z);
 function applyLayout(layout){currentLayout=layout;for(const lf of layout.fragments){const f=fragments[lf.id];if(f)placeFragment(f,lf)}}
 function applyRespawn(moved){for(const lf of moved){const f=fragments[lf.id];if(f)placeFragment(f,lf)}}
 // Solo round issued by the server: {id, seed, mapIndex, mode}. id is null for guests.
-let soloRound=null,pendingSoloRound=false,currentRoundId=null;
+let soloRound=null,pendingSoloRound=false,currentRoundId=null,currentRoundKey=null;
 function requestSoloRound(){
   const headers={'Content-Type':'application/json'};if(walletSession)headers['x-session']=walletSession;
   return fetch('/api/round/start',{method:'POST',headers,body:JSON.stringify({mode:gameMode==='lbs'?'lbs-solo':'classic-solo',mapIndex:mapIdx})}).then(r=>r.ok?r.json():null);
@@ -5428,7 +5429,7 @@ function startGame(){
   }
   // The solo seed arrived from the server (requestSoloRound). Apply it now, before any
   // mode setup, so the fragment layout is the server issued one and not the placeholder.
-  if(soloRound){if(soloRound.mapIndex!==mapIdx)switchMapInPlace(soloRound.mapIndex);applyLayout(HHLayout.createLayout(soloRound.seed,soloRound.mapIndex));currentRoundId=soloRound.id;soloRound=null}
+  if(soloRound){if(soloRound.mapIndex!==mapIdx)switchMapInPlace(soloRound.mapIndex);applyLayout(HHLayout.createLayout(soloRound.seed,soloRound.mapIndex));currentRoundId=soloRound.id;currentRoundKey=soloRound.key||null;soloRound=null}
   // LBS mode: hide all fragments, they don't exist in this mode
   if(gameMode==='lbs'){
     for(const f of fragments){f.collected=true;f.discovered=false;f.mesh.visible=false;if(f.mesh.parent)scene.remove(f.mesh)}
@@ -5565,7 +5566,9 @@ healPlayer(HEALTH_REGEN_PER_HEAD);showFloat(`+${HEALTH_REGEN_PER_HEAD} HP!`,0x5c
 // Respawn fragments of this rarity so player can recollect
 fragCounts[n.rarity]=0;
 // Respawn positions come from the layout stream, the same one the server holds.
-if(currentLayout&&!(socket&&mpConnected))applyRespawn(currentLayout.respawn(n.rarity)); // online: the server broadcasts frag:respawn
+// Online the server broadcasts frag:respawn. Solo asks the server for the same thing: the client never
+// places a fragment itself, in either path.
+if(!(socket&&mpConnected)&&currentRoundKey){fetch('/api/round/respawn',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:currentRoundKey,rarity:n.rarity})}).then(r=>r.ok?r.json():null).then(d=>{if(d&&d.fragments)applyRespawn(d.fragments)}).catch(()=>{})}
 showFloat('FRAGMENTS RESPAWNED!',R_HEX[n.rarity],player.position.clone());
 updateHud();if(socket&&mpConnected)socket.emit('mint:done',{});}
 function useRadar(){
