@@ -5949,7 +5949,7 @@ function connectMultiplayer(){
     if(!hasJoined){
       hasJoined=true;
       const s=SKINS[selectedSkin];
-      socket.emit('quickmatch',{name:getPlayerName(),skin:{skinColor:s.color,eyeStyle:s.eyes,headStyle:s.head},session:walletSession});
+      socket.emit('quickmatch',{name:getPlayerName(),skin:{skinColor:s.color,eyeStyle:s.eyes,headStyle:s.head},session:walletSession,mode:gameMode==='lbs'?'lbs':'classic'});
     }
   });
   socket.on('auth:denied',(d)=>{

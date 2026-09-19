@@ -8,6 +8,7 @@ import { createRequire } from "module";
 import { query } from "../db/pool.js";
 import { issueRound } from "../game/rounds.js";
 import { createFragState, createRejections, tryCollect, respawnRarity, FRAG_POINTS, createMintState, noteCollect, tryMint, MINT_LIMIT } from "../game/lobbyFrags.js";
+import { lobbyModeFor, rulesFor } from "../game/modes.js";
 
 const require = createRequire(import.meta.url);
 const layoutModule = require("../../../shared/layout.cjs");
@@ -70,10 +71,10 @@ function clampNum(val, min, max) {
 const lobbies = new Map();
 let nextLobbyId = 1;
 
-function createLobby() {
+function createLobby(mode) {
   const id = nextLobbyId++;
   const lobby = {
-    id, status:'waiting', players:new Map(),
+    id, mode, rules: rulesFor(mode), status:'waiting', players:new Map(),
     mapIndex: crypto.randomInt(6),
     seed: null, roundId: null, // issued by the server at round start
     startTime:null, endTime:null,
@@ -85,9 +86,9 @@ function createLobby() {
   return lobby;
 }
 
-function findOpenLobby() {
+function findOpenLobby(mode) {
   for (const [id, lobby] of lobbies) {
-    if (lobby.status === 'waiting' && lobby.players.size < MAX_PLAYERS) return lobby;
+    if (lobby.mode === mode && lobby.status === 'waiting' && lobby.players.size < MAX_PLAYERS) return lobby;
   }
   return null;
 }
@@ -105,7 +106,7 @@ export function initGameSocket(io) {
     const mintLimiter = createRateLimiter(1);  // 1 mint/sec max
     const boinkLimiter = createRateLimiter(2); // 2 boinks/sec max
 
-    socket.on('quickmatch', async ({ name, skin, session }) => {
+    socket.on('quickmatch', async ({ name, skin, session, mode }) => {
       // Prevent double-join
       if (hasJoined) return;
 
@@ -129,8 +130,10 @@ export function initGameSocket(io) {
       const pName = shortAddress(address);
       playerId = address;
 
-      let lobby = findOpenLobby();
-      if (!lobby) lobby = createLobby();
+      // Lobbies are per mode. The server selects the ruleset; the client only asks.
+      const lobbyMode = lobbyModeFor(mode);
+      let lobby = findOpenLobby(lobbyMode);
+      if (!lobby) lobby = createLobby(lobbyMode);
 
       const playerIndex = lobby.players.size;
 
@@ -165,7 +168,7 @@ export function initGameSocket(io) {
       socket.join(`lobby:${lobby.id}`);
 
       socket.emit('joined', {
-        playerId, lobbyId: lobby.id,
+        playerId, lobbyId: lobby.id, mode: lobby.mode,
         mapIndex: lobby.mapIndex,
         appearance, cosmeticExtras,
         players: Array.from(lobby.players.values()).map(p => ({
@@ -261,6 +264,12 @@ export function initGameSocket(io) {
 
       const p = currentLobby.players.get(playerId);
       if (!p) return;
+      if (!currentLobby.rules.fragments) {
+        p.rejections.total++; p.rejections.wrong_mode = (p.rejections.wrong_mode || 0) + 1;
+        console.warn(`[MP] REJECT frag:collected ${playerId} wrong_mode lobby=${currentLobby.mode} total=${p.rejections.total}`);
+        socket.emit('frag:rejected', { id, reason: 'wrong_mode' });
+        return;
+      }
       if (!currentLobby.frags) return; // round not started
 
       // Second layer, as before: no more fragments than exist on the map
@@ -292,6 +301,12 @@ export function initGameSocket(io) {
 
       const p = currentLobby.players.get(playerId);
       if (!p) return;
+      if (!currentLobby.rules.mints) {
+        p.rejections.total++; p.rejections.wrong_mode = (p.rejections.wrong_mode || 0) + 1;
+        console.warn(`[MP] REJECT mint:done ${playerId} wrong_mode lobby=${currentLobby.mode} total=${p.rejections.total}`);
+        socket.emit('mint:rejected', { reason: 'wrong_mode' });
+        return;
+      }
 
       // The payload is not read. Which chest is minted, and so its rarity and
       // points, comes from the server's own record of this player's validated
@@ -396,12 +411,13 @@ async function startRound(io, lobby) {
   // The seed is issued here, on the server, and written to the round row
   // before any client sees it. The client builds the fragment layout from
   // exactly what this emits, through the same shared module the lobby uses.
-  const round = await issueRound({ mode: 'multiplayer', mapIndex: lobby.mapIndex, maxPlayers: MAX_PLAYERS, durationSecs: ROUND_DURATION });
+  const round = await issueRound({ mode: lobby.rules.roundMode, mapIndex: lobby.mapIndex, maxPlayers: MAX_PLAYERS, durationSecs: ROUND_DURATION });
   lobby.seed = round.seed;
   lobby.roundId = round.id;
   // The lobby holds the fragment state for the round, built from the same
   // shared module the client uses, so both sides agree on every position.
-  lobby.frags = createFragState(layoutModule.createLayout(lobby.seed, lobby.mapIndex));
+  // A mode without fragments holds none, and any claim is wrong_mode.
+  lobby.frags = lobby.rules.fragments ? createFragState(layoutModule.createLayout(lobby.seed, lobby.mapIndex)) : null;
 
   lobby.status = 'active';
   lobby.startTime = Date.now();
@@ -409,10 +425,10 @@ async function startRound(io, lobby) {
 
   io.to(`lobby:${lobby.id}`).emit('round:start', {
     duration:ROUND_DURATION, endTime:lobby.endTime,
-    seed:lobby.seed, mapIndex:lobby.mapIndex,
+    seed:lobby.seed, mapIndex:lobby.mapIndex, mode:lobby.mode,
   });
 
-  console.log(`[MP] Round started lobby ${lobby.id} (${lobby.players.size} players)`);
+  console.log(`[MP] Round started lobby ${lobby.id} mode=${lobby.mode} (${lobby.players.size} players)`);
 
   lobby.tickInterval = setInterval(() => {
     if (lobby.status !== 'active') { clearInterval(lobby.tickInterval); return; }
@@ -480,8 +496,8 @@ async function saveResults(results, lobby) {
   } else {
     const round = await query(
       `INSERT INTO rounds (mode, map_index, seed, status, max_players, duration_secs, start_time, end_time, winner)
-       VALUES ('multiplayer', $1, $2, 'completed', $3, $4, to_timestamp($5 / 1000.0), to_timestamp($6 / 1000.0), $7) RETURNING id`,
-      [lobby.mapIndex, lobby.seed, MAX_PLAYERS, ROUND_DURATION, lobby.startTime, lobby.endTime, results[0]?.id ?? null]
+       VALUES ($8, $1, $2, 'completed', $3, $4, to_timestamp($5 / 1000.0), to_timestamp($6 / 1000.0), $7) RETURNING id`,
+      [lobby.mapIndex, lobby.seed, MAX_PLAYERS, ROUND_DURATION, lobby.startTime, lobby.endTime, results[0]?.id ?? null, lobby.rules.roundMode]
     );
     roundId = round.rows[0].id;
   }
