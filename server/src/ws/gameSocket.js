@@ -3,7 +3,9 @@
  * Security: input validation, rate limiting, anti-cheat, XSS prevention
  */
 
+import crypto from "crypto";
 import { query } from "../db/pool.js";
+import { issueRound } from "../game/rounds.js";
 import { verifySessionToken, shortAddress } from "../utils/walletAuth.js";
 
 const TICK_RATE = 100;
@@ -67,8 +69,8 @@ function createLobby() {
   const id = nextLobbyId++;
   const lobby = {
     id, status:'waiting', players:new Map(),
-    mapIndex: Math.floor(Math.random() * 6),
-    mapSeed: Math.random().toString(36).slice(2, 10),
+    mapIndex: crypto.randomInt(6),
+    seed: null, roundId: null, // issued by the server at round start
     startTime:null, endTime:null,
     tickInterval:null, countdownInterval:null, autoStartTimer:null,
     waitStartedAt:null, waitTickInterval:null,
@@ -157,7 +159,7 @@ export function initGameSocket(io) {
 
       socket.emit('joined', {
         playerId, lobbyId: lobby.id,
-        mapSeed: lobby.mapSeed, mapIndex: lobby.mapIndex,
+        mapIndex: lobby.mapIndex,
         appearance, cosmeticExtras,
         players: Array.from(lobby.players.values()).map(p => ({
           id:p.id, name:p.name, appearance:p.appearance, extras:p.cosmeticExtras,
@@ -360,19 +362,26 @@ function beginCountdown(io, lobby) {
       io.to(`lobby:${lobby.id}`).emit('countdown', { count });
     } else {
       clearInterval(lobby.countdownInterval);
-      startRound(io, lobby);
+      startRound(io, lobby).catch((e) => console.error('[MP] Round start failed:', e.message));
     }
   }, 1000);
 }
 
-function startRound(io, lobby) {
+async function startRound(io, lobby) {
+  // The seed is issued here, on the server, and written to the round row
+  // before any client sees it. The client builds the fragment layout from
+  // exactly what this emits, through the same shared module the lobby uses.
+  const round = await issueRound({ mode: 'multiplayer', mapIndex: lobby.mapIndex, maxPlayers: MAX_PLAYERS, durationSecs: ROUND_DURATION });
+  lobby.seed = round.seed;
+  lobby.roundId = round.id;
+
   lobby.status = 'active';
   lobby.startTime = Date.now();
   lobby.endTime = lobby.startTime + ROUND_DURATION * 1000;
 
   io.to(`lobby:${lobby.id}`).emit('round:start', {
     duration:ROUND_DURATION, endTime:lobby.endTime,
-    mapSeed:lobby.mapSeed, mapIndex:lobby.mapIndex,
+    seed:lobby.seed, mapIndex:lobby.mapIndex,
   });
 
   console.log(`[MP] Round started lobby ${lobby.id} (${lobby.players.size} players)`);
@@ -424,15 +433,24 @@ function endRound(io, lobby) {
 }
 
 async function saveResults(results, lobby) {
-  // One rounds row per match. seed is the lobby map seed for now; phase 1
-  // replaces it with the run seed. commit_hash, signature and tx_hash stay
-  // null until phases 2 and 3.
-  const round = await query(
-    `INSERT INTO rounds (mode, map_index, seed, status, max_players, duration_secs, start_time, end_time, winner)
-     VALUES ('multiplayer', $1, $2, 'completed', $3, $4, to_timestamp($5 / 1000.0), to_timestamp($6 / 1000.0), $7) RETURNING id`,
-    [lobby.mapIndex, lobby.mapSeed, MAX_PLAYERS, ROUND_DURATION, lobby.startTime, lobby.endTime, results[0]?.id ?? null]
-  );
-  const roundId = round.rows[0].id;
+  // The rounds row was written when the seed was issued at round start.
+  // Close it here. commit_hash, signature and tx_hash stay null until
+  // phases 2 and 3. If the row could not be written then (database down at
+  // issue time), write it now so the seed is never lost.
+  let roundId = lobby.roundId;
+  if (roundId) {
+    await query(
+      `UPDATE rounds SET status = 'completed', end_time = to_timestamp($2 / 1000.0), winner = $3 WHERE id = $1`,
+      [roundId, lobby.endTime, results[0]?.id ?? null]
+    );
+  } else {
+    const round = await query(
+      `INSERT INTO rounds (mode, map_index, seed, status, max_players, duration_secs, start_time, end_time, winner)
+       VALUES ('multiplayer', $1, $2, 'completed', $3, $4, to_timestamp($5 / 1000.0), to_timestamp($6 / 1000.0), $7) RETURNING id`,
+      [lobby.mapIndex, lobby.seed, MAX_PLAYERS, ROUND_DURATION, lobby.startTime, lobby.endTime, results[0]?.id ?? null]
+    );
+    roundId = round.rows[0].id;
+  }
   for (const r of results) {
     // r.id is the recovered address. Every seat written here is human;
     // a bot seat would carry a bot id and is_bot true (see game/ids.js).

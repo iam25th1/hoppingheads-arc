@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS rounds (
   start_time      TIMESTAMPTZ,
   end_time        TIMESTAMPTZ,
   winner          VARCHAR(64),                      -- participant id of the winner
+  issued_to       VARCHAR(64),                      -- solo: the participant the seed was issued to
   prize_pool_wei  VARCHAR(78) DEFAULT '0',
   commit_hash     VARCHAR(66),                      -- phase 2: commitment to the result set
   signature       VARCHAR(132),                     -- phase 2: settler signature over commit_hash

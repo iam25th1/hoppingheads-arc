@@ -2640,6 +2640,12 @@ const SOLO_PLACEHOLDER_SEED="0x"+"f7a2c1de".repeat(8);
 function placeFragment(f,lf){f.x=lf.x;f.z=lf.z;f.mesh.position.set(lf.x,0,lf.z);f.collected=false;f.discovered=false;f.mesh.visible=false;if(!f.mesh.parent)scene.add(f.mesh)}
 function applyLayout(layout){currentLayout=layout;for(const lf of layout.fragments){const f=fragments[lf.id];if(f)placeFragment(f,lf)}}
 function applyRespawn(moved){for(const lf of moved){const f=fragments[lf.id];if(f)placeFragment(f,lf)}}
+// Solo round issued by the server: {id, seed, mapIndex, mode}. id is null for guests.
+let soloRound=null,pendingSoloRound=false,currentRoundId=null;
+function requestSoloRound(){
+  const headers={'Content-Type':'application/json'};if(walletSession)headers['x-session']=walletSession;
+  return fetch('/api/round/start',{method:'POST',headers,body:JSON.stringify({mode:gameMode==='lbs'?'lbs-solo':'classic-solo',mapIndex:mapIdx})}).then(r=>r.ok?r.json():null);
+}
 const unlockedNFTs=[];
 function spawnNFT(rarity){
   const color=R_HEX[rarity];
@@ -5405,12 +5411,23 @@ async function fetchLeaderboard(){
 function startGame(){
   
   if(gamePhase!=='title')return;
+  // Solo rounds get their seed from the server, through the same path a lobby round does.
+  // Ask once, then re-enter with soloRound set.
+  if(gameMode!=='multiplayer'&&!soloRound){
+    if(pendingSoloRound)return;
+    pendingSoloRound=true;
+    requestSoloRound().then(r=>{pendingSoloRound=false;if(!r){alert('Could not start the round. Is the server up?');return}soloRound=r;startGame()}).catch(()=>{pendingSoloRound=false;alert('Could not start the round. Is the server up?')});
+    return;
+  }
   // Build the map if we're still on the menu arcade scene. Classic mode path
   // previously skipped switchMapInPlace entirely, causing no map/npcs to render.
   if(!window._mapBuilt){
     switchMapInPlace(mapIdx);
     window._mapBuilt=true;
   }
+  // The solo seed arrived from the server (requestSoloRound). Apply it now, before any
+  // mode setup, so the fragment layout is the server issued one and not the placeholder.
+  if(soloRound){if(soloRound.mapIndex!==mapIdx)switchMapInPlace(soloRound.mapIndex);applyLayout(HHLayout.createLayout(soloRound.seed,soloRound.mapIndex));currentRoundId=soloRound.id;soloRound=null}
   // LBS mode: hide all fragments, they don't exist in this mode
   if(gameMode==='lbs'){
     for(const f of fragments){f.collected=true;f.discovered=false;f.mesh.visible=false;if(f.mesh.parent)scene.remove(f.mesh)}
@@ -5579,7 +5596,8 @@ function useRadar(){
 // Submit classic mode score to server for leaderboard
 function submitClassicScore(sc,minted,frags){
   if(!walletSession)return; // guests are not on the leaderboard
-  fetch('/api/score',{method:'POST',headers:{'Content-Type':'application/json','x-session':walletSession},body:JSON.stringify({score:sc,minted:minted,fragments:frags,map_index:mapIdx})})
+  if(!currentRoundId)return; // no server issued round to score against
+  fetch('/api/score',{method:'POST',headers:{'Content-Type':'application/json','x-session':walletSession},body:JSON.stringify({round_id:currentRoundId,score:sc,minted:minted,fragments:frags})})
     .catch(()=>{})
 }
 // End screen visual state helper
@@ -6011,6 +6029,8 @@ function connectMultiplayer(){
   });
   // Server round start
   socket.on('round:start',(d)=>{
+    // The server issued seed and map. Build the layout from them through the shared module.
+    if(d.seed&&typeof d.mapIndex==='number'){applyLayout(HHLayout.createLayout(d.seed,d.mapIndex))}
     document.getElementById('cd-text').textContent='GO!';
     document.getElementById('cd-text').style.color='#5cc06a';
     const el=document.getElementById('cd-text');el.style.animation='none';el.offsetHeight;el.style.animation='cdPop 0.6s ease-out';
