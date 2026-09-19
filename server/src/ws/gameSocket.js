@@ -10,7 +10,7 @@ import { issueRound } from "../game/rounds.js";
 import { createFragState, MINT_LIMIT, MINT_DURATIONS, MINT_GRACE_MS } from "../game/lobbyFrags.js";
 import { collectFragment, completeMint, hasMintableChest } from "../game/lobbyActions.js";
 import { lobbyModeFor, rulesFor } from "../game/modes.js";
-import { grantKnockback, judgeMove, MAX_SPEED } from "../game/movement.js";
+import { grantKnockback, judgeMove, BASE_SPEED, BOOST_SPEED } from "../game/movement.js";
 import { createSeat, fillWithBots, countSeats, BOT_FILL_TO, DEFAULT_SKINS } from "../game/bots.js";
 import { createBotBrain, stepBot, BOT_SPEED } from "../game/botDriver.js";
 import { createPowerupState, spawnIfDue, expire, pickups, hasEffect } from "../game/powerups.js";
@@ -92,9 +92,12 @@ function createLobby(mode) {
  * after, so a real cheat cannot flood the log.
  */
 function applyMove(p, nx, nz, ry, moving, now) {
-  // Grow slows a player (mirrors client GROW_PER_FRAG and SPEED_PENALTY_MAX)
+  // The cap is per seat: base speed, or the boosted speed only while the
+  // server's own powerup record says this seat is boosted. Grow slows a
+  // player (mirrors client GROW_PER_FRAG and SPEED_PENALTY_MAX).
+  const cap = hasEffect(p, 'speed', now) ? BOOST_SPEED : BASE_SPEED;
   const growFactor = Math.min(1, (p.fragCount * 0.022) / 1.2);
-  const adjustedMaxSpeed = MAX_SPEED * (1 - growFactor * 0.45);
+  const adjustedMaxSpeed = cap * (1 - growFactor * 0.45);
   const judged = judgeMove(p.move, nx, nz, now, adjustedMaxSpeed);
   if (judged.flagged) {
     p.violations.move++;
