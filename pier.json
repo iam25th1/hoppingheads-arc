@@ -1,0 +1,15 @@
+{
+  "name": "hh-arc",
+  "runtime": "node",
+  "command": "node server/src/index.js",
+  "port": 7510,
+  "healthPath": "/api/health",
+  "autostart": false,
+  "deploySteps": [
+    "git pull --ff-only",
+    "npm ci --ignore-scripts",
+    "npm --prefix server ci --ignore-scripts",
+    "npm run gate"
+  ],
+  "notes": "Hopping Heads Arc game server. Env (PORT, DATABASE_URL, SESSION_SECRET, ALLOWED_ORIGINS, CHAIN_ID) lives in Pier, never in the repo. See .env.example. No signer or settler service yet; those arrive in phase 3."
+}

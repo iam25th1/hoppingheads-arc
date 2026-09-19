@@ -1,10 +1,12 @@
 {
-  "name": "hoppingheads",
-  "version": "1.0.0",
-  "description": "Hopping Heads - repo root. Tooling and gate only; the server manifest lives in server/package.json.",
+  "name": "hoppingheads-arc",
+  "version": "0.1.0",
+  "description": "Hopping Heads Arc: staked arena. Repo root holds the gate and dev tooling; the server manifest is server/package.json.",
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "node --watch server/src/index.js",
+    "start": "node server/src/index.js",
     "gate": "npm run typecheck && npm run lint && npm run test && npm run build",
     "typecheck": "node scripts/typecheck.mjs",
     "lint": "node scripts/lint.mjs",
@@ -12,8 +14,6 @@
     "build": "node scripts/build.mjs",
     "install-hooks": "node -e \"const fs=require('fs'),p=require('path');const src=p.join('scripts','git-hooks','pre-push');const dst=p.join('.git','hooks','pre-push');fs.copyFileSync(src,dst);fs.chmodSync(dst,0o755);console.log('[install-hooks] installed pre-push hook')\""
   },
-  "keywords": [],
-  "author": "",
   "license": "ISC",
   "devDependencies": {
     "eslint": "^9.39.4",
