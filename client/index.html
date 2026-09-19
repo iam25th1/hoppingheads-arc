@@ -2629,7 +2629,7 @@ function safePosInMap(range){
   return{x:(rng()-0.5)*MAP*0.2,z:(rng()-0.5)*MAP*0.2};
 }
 const fragments=[];const FRAG_N=[30,18,12,7,4];
-for(let r=0;r<5;r++){for(let i=0;i<FRAG_N[r];i++){const fg=new Group();const color=R_HEX[r];const fm=new MeshPhongMaterial({color,emissive:color,emissiveIntensity:0.35,flatShading:true,transparent:true,opacity:0.85});fg.add(new Mesh(new ConeGeometry(0.35,0.55,4),fm));fg.children[0].position.y=0.55;const bot=new Mesh(new ConeGeometry(0.35,0.35,4),fm);bot.rotation.x=Math.PI;bot.position.y=0.15;fg.add(bot);fg.position.set(0,0,0);fg.visible=false;scene.add(fg);fragments.push({mesh:fg,rarity:r,x:0,z:0,collected:false,discovered:false})}}
+for(let r=0;r<5;r++){for(let i=0;i<FRAG_N[r];i++){const fg=new Group();const color=R_HEX[r];const fm=new MeshPhongMaterial({color,emissive:color,emissiveIntensity:0.35,flatShading:true,transparent:true,opacity:0.85});fg.add(new Mesh(new ConeGeometry(0.35,0.55,4),fm));fg.children[0].position.y=0.55;const bot=new Mesh(new ConeGeometry(0.35,0.35,4),fm);bot.rotation.x=Math.PI;bot.position.y=0.15;fg.add(bot);fg.position.set(0,0,0);fg.visible=false;scene.add(fg);fragments.push({id:fragments.length,mesh:fg,rarity:r,x:0,z:0,collected:false,discovered:false})}}
 // Fragment positions come from the shared layout module (shared/layout.cjs, served at
 // /game/lib/layout.js), never from safePosInMap. The server computes the same layout from
 // the same file, so both sides agree byte for byte. fragments[i] is layout fragment id i:
@@ -3085,7 +3085,8 @@ function tryBoink(){
           }
         }
         updateHud();
-        if(socket&&mpConnected)socket.emit('frag:collected',{rarity:0,score});
+        // Stolen fragments are client only entities. The server holds no record of them, so
+        // they are not reported and do not score online. Local score still moves.
         break;
       }
     }
@@ -5564,7 +5565,7 @@ healPlayer(HEALTH_REGEN_PER_HEAD);showFloat(`+${HEALTH_REGEN_PER_HEAD} HP!`,0x5c
 // Respawn fragments of this rarity so player can recollect
 fragCounts[n.rarity]=0;
 // Respawn positions come from the layout stream, the same one the server holds.
-if(currentLayout)applyRespawn(currentLayout.respawn(n.rarity));
+if(currentLayout&&!(socket&&mpConnected))applyRespawn(currentLayout.respawn(n.rarity)); // online: the server broadcasts frag:respawn
 showFloat('FRAGMENTS RESPAWNED!',R_HEX[n.rarity],player.position.clone());
 updateHud();if(socket&&mpConnected)socket.emit('mint:done',{rarity:n.rarity,score});}
 function useRadar(){
@@ -6073,6 +6074,12 @@ function connectMultiplayer(){
     }
     for(const [id,rp] of remotePlayers){if(!seen.has(id)){scene.remove(rp.mesh);remotePlayers.delete(id)}}
   });
+  // The server owns fragment state. taken: gone for everyone (a no-op for the collector,
+  // who removed it optimistically). rejected: the optimistic collect was wrong; put it back
+  // and undo the local count and points. respawn: positions from the server's layout stream.
+  socket.on('frag:taken',(d)=>{const f=fragments[d.id];if(!f||f.collected)return;f.collected=true;if(f.mesh.parent)scene.remove(f.mesh)});
+  socket.on('frag:rejected',(d)=>{const f=fragments[d.id];if(!f)return;if(f.collected){f.collected=false;fragCounts[f.rarity]=Math.max(0,fragCounts[f.rarity]-1);score=Math.max(0,score-3);totalFragCount=getTotalFrags();f.mesh.visible=true;if(!f.mesh.parent)scene.add(f.mesh);updateHud()}showFloat('NOT COUNTED',0x6a6490,new Vector3(f.x,3,f.z))});
+  socket.on('frag:respawn',(d)=>{applyRespawn(d.fragments)});
   socket.on('mint:broadcast',(d)=>{
     const rp=remotePlayers.get(d.id);
     if(rp&&rp.mesh._skinMat){rp.mesh._skinMat.emissive.setHex(0xffd54f);rp.mesh._skinMat.emissiveIntensity=0.3;setTimeout(()=>{rp.mesh._skinMat.emissive.setHex(0);rp.mesh._skinMat.emissiveIntensity=0},500)}
@@ -6409,7 +6416,7 @@ function animate(){
 
   // Fragments (blocked during shadow form)
   if(!shadowActive){
-  for(const f of fragments){if(f.collected)continue;const dx=player.position.x-f.x,dz=player.position.z-f.z;const dist=Math.sqrt(dx*dx+dz*dz);const discR=activeEffects.magnet>0?DISC_R*3:DISC_R*1.5;if(!f.discovered&&dist<=discR){f.discovered=true;f.mesh.visible=true;f.mesh.scale.set(0.01,0.01,0.01);sfxDiscover()}if(f.discovered&&dist<5&&dist>3){const pull=0.12*(1-dist/5);f.mesh.position.x+=(dx/dist)*pull;f.mesh.position.z+=(dz/dist)*pull}if(f.discovered&&dist<=3){f.collected=true;scene.remove(f.mesh);fragCounts[f.rarity]++;healPlayer(HEALTH_REGEN_PER_FRAG);const feverBonus=isInFeverZone(f.x,f.z)?FEVER_MULTIPLIER:1;const pts=3*feverBonus;score+=pts;totalFragCount=getTotalFrags();const lbl=feverBonus>1?`+${R_LBL[f.rarity]} x${FEVER_MULTIPLIER}!`:`+${R_LBL[f.rarity]} FRAGMENT`;showFloat(lbl,feverBonus>1?0xffd54f:R_HEX[f.rarity],new Vector3(f.x,3,f.z));player._cFlash=0.3;player._skinMat.emissive.setHex(feverBonus>1?0xffd54f:R_HEX[f.rarity]);sfxCollect(f.rarity);if(fragCounts[f.rarity]===3){spawnNFT(f.rarity);showUnlock(`${R_LBL[f.rarity]} CHEST SPAWNED!`);sfxUnlock();}updateHud();if(socket&&mpConnected)socket.emit('frag:collected',{rarity:f.rarity,score});}}
+  for(const f of fragments){if(f.collected)continue;const dx=player.position.x-f.x,dz=player.position.z-f.z;const dist=Math.sqrt(dx*dx+dz*dz);const discR=activeEffects.magnet>0?DISC_R*3:DISC_R*1.5;if(!f.discovered&&dist<=discR){f.discovered=true;f.mesh.visible=true;f.mesh.scale.set(0.01,0.01,0.01);sfxDiscover()}if(f.discovered&&dist<5&&dist>3){const pull=0.12*(1-dist/5);f.mesh.position.x+=(dx/dist)*pull;f.mesh.position.z+=(dz/dist)*pull}if(f.discovered&&dist<=3){f.collected=true;scene.remove(f.mesh);fragCounts[f.rarity]++;healPlayer(HEALTH_REGEN_PER_FRAG);const feverBonus=isInFeverZone(f.x,f.z)?FEVER_MULTIPLIER:1;const pts=3*feverBonus;score+=pts;totalFragCount=getTotalFrags();const lbl=feverBonus>1?`+${R_LBL[f.rarity]} x${FEVER_MULTIPLIER}!`:`+${R_LBL[f.rarity]} FRAGMENT`;showFloat(lbl,feverBonus>1?0xffd54f:R_HEX[f.rarity],new Vector3(f.x,3,f.z));player._cFlash=0.3;player._skinMat.emissive.setHex(feverBonus>1?0xffd54f:R_HEX[f.rarity]);sfxCollect(f.rarity);if(fragCounts[f.rarity]===3){spawnNFT(f.rarity);showUnlock(`${R_LBL[f.rarity]} CHEST SPAWNED!`);sfxUnlock();}updateHud();if(socket&&mpConnected)socket.emit('frag:collected',{id:f.id});}}
   } // end shadow check
   for(const f of fragments){if(!f.discovered||f.collected)continue;f.mesh.rotation.y+=dt*2;f.mesh.position.y=0.8+Math.sin(el*2.5+f.x)*0.3;if(f.mesh.scale.x<0.99){const s=MathUtils.lerp(f.mesh.scale.x,1,dt*5);f.mesh.scale.set(s,s,s)}}
 
@@ -6453,7 +6460,7 @@ function animate(){
       sfxCollect(sf.rarity);
       if(fragCounts[sf.rarity]===3){spawnNFT(sf.rarity);showUnlock(`${R_LBL[sf.rarity]} CHEST SPAWNED!`);sfxUnlock()}
       updateHud();
-      if(socket&&mpConnected)socket.emit('frag:collected',{rarity:sf.rarity,score});
+      // Scattered fragments are client only entities, same as stolen ones: not reported.
     }
     // NPC collection of scattered fragments
     for(const e of enemies){
