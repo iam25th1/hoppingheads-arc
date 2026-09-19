@@ -87,3 +87,70 @@ test('respawn: moves one rarity, clears its claims, positions follow the layout 
   const twin = createFragState(layout.createLayout(SEED, 1));
   assert.deepEqual(respawnRarity(twin, 2), moved);
 });
+
+// -- Mints ---------------------------------------------------------
+
+import { createMintState, noteCollect, tryMint, MINT_LIMIT, MINT_POINTS, MINT_DURATIONS, MINT_GRACE_MS } from '../src/game/lobbyFrags.js';
+
+test('mint: the old exploit. Rarity 4 claimed five times with nothing collected scores nothing', () => {
+  const mint = createMintState();
+  const rej = createRejections();
+  let score = 0;
+  for (let i = 0; i < 5; i++) {
+    const r = tryMint(mint, 100000, rej);
+    assert.equal(r.ok, false);
+    assert.equal(r.reason, 'mint_no_chest');
+    if (r.ok) score += r.points;
+  }
+  assert.equal(score, 0);
+  assert.equal(mint.minted, 0);
+  assert.equal(rej.mint_no_chest, 5);
+});
+
+test('mint: three collections of one rarity spawn a chest; rarity comes from the record', () => {
+  const mint = createMintState();
+  const rej = createRejections();
+  assert.equal(noteCollect(mint, 2, 1000), null);
+  assert.equal(noteCollect(mint, 2, 1001), null);
+  assert.equal(noteCollect(mint, 2, 1002), 2, 'third of a rarity spawns its chest');
+  assert.deepEqual(mint.fragsSinceChest, [0, 0, 0, 0, 0]);
+  const early = tryMint(mint, 1002 + MINT_DURATIONS[2] - MINT_GRACE_MS - 1, rej);
+  assert.equal(early.reason, 'mint_early');
+  const done = tryMint(mint, 1002 + MINT_DURATIONS[2] - MINT_GRACE_MS, rej);
+  assert.deepEqual(done, { ok: true, rarity: 2, points: MINT_POINTS[2], minted: 1 });
+  assert.equal(tryMint(mint, 999999, rej).reason, 'mint_no_chest', 'a chest mints once');
+});
+
+test('mint: a player who collected three commons scores a common, whatever they claim', () => {
+  // The claim carries no rarity at all, so "claiming legendary" is not even expressible.
+  const mint = createMintState();
+  const rej = createRejections();
+  for (let i = 0; i < 3; i++) noteCollect(mint, 0, 0);
+  const r = tryMint(mint, MINT_DURATIONS[0], rej);
+  assert.equal(r.rarity, 0);
+  assert.equal(r.points, 10);
+});
+
+test('mint: highest pending rarity is consumed first, and the cap holds', () => {
+  const mint = createMintState();
+  const rej = createRejections();
+  for (let i = 0; i < 3; i++) noteCollect(mint, 0, 0);
+  for (let i = 0; i < 3; i++) noteCollect(mint, 3, 0);
+  assert.equal(tryMint(mint, 10000, rej).rarity, 3);
+  assert.equal(tryMint(mint, 10000, rej).rarity, 0);
+  for (let m = mint.minted; m < MINT_LIMIT; m++) {
+    for (let i = 0; i < 3; i++) noteCollect(mint, 1, 0);
+    assert.equal(tryMint(mint, 10000, rej).ok, true);
+  }
+  for (let i = 0; i < 3; i++) noteCollect(mint, 1, 0);
+  assert.equal(tryMint(mint, 10000, rej).reason, 'mint_cap');
+  assert.equal(mint.minted, MINT_LIMIT);
+});
+
+test('mint: six collections of one rarity make two chests', () => {
+  const mint = createMintState();
+  const spawned = [];
+  for (let i = 0; i < 6; i++) { const r = noteCollect(mint, 4, i); if (r !== null) spawned.push(r); }
+  assert.deepEqual(spawned, [4, 4]);
+  assert.equal(mint.chests.length, 2);
+});

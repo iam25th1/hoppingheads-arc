@@ -33,7 +33,7 @@ import { isInRange, calculateSetBonuses } from "./mapGenerator.js";
 export const DISCOVERY_RADIUS = 48;
 export const CONTEST_RADIUS = 32;
 export const SPEED_BONUS_WINDOW = 2000; // ms after discovery
-export const MINT_LIMIT = 10;
+export const MINT_LIMIT = 5; // reconciled with gameSocket.js and the client cap; 10 was Mint Rush (15 to 25 assets a map)
 export const DISCOVERY_CREDIT = 5; // points per asset discovered, minted or not
 export const SPEED_BONUS_MULTIPLIER = 1.2;
 

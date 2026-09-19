@@ -7,7 +7,7 @@ import crypto from "crypto";
 import { createRequire } from "module";
 import { query } from "../db/pool.js";
 import { issueRound } from "../game/rounds.js";
-import { createFragState, createRejections, tryCollect, respawnRarity, FRAG_POINTS } from "../game/lobbyFrags.js";
+import { createFragState, createRejections, tryCollect, respawnRarity, FRAG_POINTS, createMintState, noteCollect, tryMint, MINT_LIMIT } from "../game/lobbyFrags.js";
 
 const require = createRequire(import.meta.url);
 const layoutModule = require("../../../shared/layout.cjs");
@@ -156,7 +156,8 @@ export function initGameSocket(io) {
         appearance, cosmeticExtras, index: playerIndex,
         lastPosTime: Date.now(), lastX:0, lastZ:0,
         fragCount:0, maxFrags:48, shadow:0,
-        maxMints:5, boinkCd:0,
+        maxMints:MINT_LIMIT, boinkCd:0,
+        mint: createMintState(), // chests earned from validated collections; the only mint record
         rejections: createRejections(), // per reason tally of refused claims, logged at round end
       });
 
@@ -279,28 +280,32 @@ export function initGameSocket(io) {
       p.fragments[f.rarity]++;
       p.fragCount++;
       p.score += FRAG_POINTS;
+      noteCollect(p.mint, f.rarity, Date.now()); // three of a rarity earn a chest, server side
 
       // Everyone, the collector included: the fragment is gone for all
       io.to(`lobby:${currentLobby.id}`).emit('frag:taken', { id: f.id, by: playerId, rarity: f.rarity, score: p.score });
     });
 
-    socket.on('mint:done', ({ rarity, score }) => {
+    socket.on('mint:done', () => {
       if (!currentLobby || !playerId) return;
       if (!mintLimiter()) return;
 
       const p = currentLobby.players.get(playerId);
       if (!p) return;
 
-      // Cap mints
-      if (p.minted >= p.maxMints) return;
-
-      const r = clampNum(rarity, 0, 4);
-      if (r !== Math.floor(r)) return;
-
-      p.minted++;
-      // Server calculates mint score
-      const MINT_PTS = [10, 25, 50, 100, 250];
-      p.score += MINT_PTS[r];
+      // The payload is not read. Which chest is minted, and so its rarity and
+      // points, comes from the server's own record of this player's validated
+      // collections (lobbyFrags.js). No chest, too early, or over the cap:
+      // reject and tally.
+      const m = tryMint(p.mint, Date.now(), p.rejections);
+      if (!m.ok) {
+        console.warn(`[MP] REJECT mint:done ${playerId} ${m.reason}${m.rarity !== undefined ? ` rarity=${m.rarity} elapsed=${m.elapsed}` : ''} total=${p.rejections.total}`);
+        socket.emit('mint:rejected', { reason: m.reason });
+        return;
+      }
+      const r = m.rarity;
+      p.minted = m.minted;
+      p.score += m.points;
 
       io.to(`lobby:${currentLobby.id}`).emit('mint:broadcast', { id:playerId, rarity:r, minted:p.minted, score:p.score });
 
