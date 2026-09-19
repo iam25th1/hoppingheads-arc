@@ -8,8 +8,6 @@ import cors from "cors";
 import helmet from "helmet";
 
 import apiRoutes from "./routes/api.js";
-import trackRoutes from "./routes/track.js";
-import metricsRoutes from "./routes/metrics.js";
 import { initDb } from "./db/pool.js";
 import { initContracts } from "./services/contractService.js";
 import { initGameSocket } from "./ws/gameSocket.js";
@@ -88,8 +86,6 @@ app.use((req, res, next) => {
 // Wallet sign in
 app.use("/auth", walletAuthRoutes);
 
-app.use("/api/track", trackRoutes);
-app.use("/api/metrics", metricsRoutes);
 
 // API routes
 app.use("/api", apiRoutes);

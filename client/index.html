@@ -20,23 +20,6 @@
 <meta name="twitter:title" content="Hopping Heads - Play Now">
 <meta name="twitter:image" content="https://hoppingheads.fun/og-banner.png">
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Silkscreen:wght@400;700&display=swap" rel="stylesheet">
-<script>
-(function(){
-  var API='/api/track';
-  var SK='hh_sid';
-  var sid=localStorage.getItem(SK);
-  if(!sid){sid=Date.now().toString(36)+Math.random().toString(36).slice(2,10);try{localStorage.setItem(SK,sid)}catch(e){}}
-  function gd(){var w=window.innerWidth||0;if(w<600)return'mobile';if(w<1024)return'tablet';return'desktop'}
-  window.hhTrack=function(ev,props){
-    try{
-      var b={event:ev,sessionId:sid,session:localStorage.getItem('hh_session')||null,props:props||{},referrer:document.referrer||null,device:gd()};
-      if(navigator.sendBeacon){navigator.sendBeacon(API,new Blob([JSON.stringify(b)],{type:'application/json'}))}
-      else{fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b),keepalive:true}).catch(function(){})}
-    }catch(e){}
-  };
-  window.hhTrack('page_view');
-})();
-</script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#0f0a1a;overflow:hidden;font-family:'Silkscreen',monospace}
@@ -5026,7 +5009,7 @@ function dropCoin(){
 
 function powerOn(){
   sessionStorage.setItem('coinInserted','1');
-  window.hhTrack&&window.hhTrack('coin_insert',{map:mapIdx});
+  
   coin.style.display='none';coinHint.style.display='none';coinArrow.style.display='none';
   document.getElementById('slot-glow').style.display='none';
   if(arcadeCab&&arcadeCab._coinSlotMat)arcadeCab._coinSlotMat.emissiveIntensity=0;
@@ -5171,7 +5154,7 @@ document.querySelectorAll('.menu-item').forEach(item=>{
     }else if(action==='leaderboard'){
       showMenuPage('leaderboard');
       fetchLeaderboard();
-      window.hhTrack&&window.hhTrack('leaderboard_view');
+      
     }else if(action==='back'){
       if(socket&&mpConnected){socket.disconnect();socket=null;mpConnected=false}
       // Context-aware back navigation
@@ -5408,7 +5391,7 @@ async function fetchLeaderboard(){
 }
 
 function startGame(){
-  window.hhTrack&&window.hhTrack('game_start',{map:mapIdx,mode:gameMode});
+  
   if(gamePhase!=='title')return;
   // Build the map if we're still on the menu arcade scene. Classic mode path
   // previously skipped switchMapInPlace entirely, causing no map/npcs to render.
@@ -5553,7 +5536,7 @@ healPlayer(HEALTH_REGEN_PER_HEAD);showFloat(`+${HEALTH_REGEN_PER_HEAD} HP!`,0x5c
 fragCounts[n.rarity]=0;
 for(const f of fragments){if(f.rarity===n.rarity){f.collected=false;f.discovered=false;f.mesh.visible=false;const pos=safePosInMap(0.38);f.x=pos.x;f.z=pos.z;f.mesh.position.set(pos.x,0,pos.z);if(!f.mesh.parent)scene.add(f.mesh)}}
 showFloat('FRAGMENTS RESPAWNED!',R_HEX[n.rarity],player.position.clone());
-updateHud();if(socket&&mpConnected)socket.emit('mint:done',{rarity:n.rarity,score});window.hhTrack&&window.hhTrack('mint_done',{rarity:n.rarity,map:mapIdx,score:score})}
+updateHud();if(socket&&mpConnected)socket.emit('mint:done',{rarity:n.rarity,score});}
 function useRadar(){
   if(radarPings<=0||lbsPlayerEliminated)return;
   radarPings--;sfxRadar();scanPulseTimer=5;scanPulseActive=true;
@@ -5807,7 +5790,7 @@ function endRound(){gameActive=false;gamePhase='ended';lbsSpectating=false;lbsSp
 ['hud','timer','map-name-hud','pw-hud','panel-bc','panel-tl','panel-tr','mob-mint','mint-bar-wrap'].forEach(function(hid){
   var el=document.getElementById(hid); if(el)el.style.display='';
 });
-const totalFrags=fragCounts.reduce((a,b)=>a+b,0);window.hhTrack&&window.hhTrack('game_end',{map:mapIdx,score:score,minted:mintedCount,frags:totalFrags,mode:gameMode});if(gameTimerInterval){clearInterval(gameTimerInterval);gameTimerInterval=null}
+const totalFrags=fragCounts.reduce((a,b)=>a+b,0);if(gameTimerInterval){clearInterval(gameTimerInterval);gameTimerInterval=null}
 
 // LBS MODE: survival results
 if(gameMode==='lbs'){
@@ -5950,7 +5933,7 @@ function connectMultiplayer(){
       return;
     }
     myPlayerId=d.playerId;mpConnected=true;
-    window.hhTrack&&window.hhTrack('quickmatch_join',{map:mapIdx,players:d.players.length});
+    
     // Update local player appearance to match server assignment
     if(d.appearance){
       const merged=Object.assign({},d.appearance,d.cosmeticExtras||{});
@@ -6063,7 +6046,7 @@ function connectMultiplayer(){
   });
   socket.on('round:end',(d)=>{
     gameActive=false;gamePhase='ended';
-    window.hhTrack&&window.hhTrack('round_end',{map:mapIdx,score:score,minted:mintedCount,frags:fragCounts.reduce((a,b)=>a+b,0),multiplayer:true});
+    
 
     document.getElementById('end-map').textContent='ONLINE - '+MAP_NAMES[mapIdx];
     document.getElementById('end-minted').textContent=mintedCount;
@@ -6393,7 +6376,7 @@ function animate(){
 
   // Fragments (blocked during shadow form)
   if(!shadowActive){
-  for(const f of fragments){if(f.collected)continue;const dx=player.position.x-f.x,dz=player.position.z-f.z;const dist=Math.sqrt(dx*dx+dz*dz);const discR=activeEffects.magnet>0?DISC_R*3:DISC_R*1.5;if(!f.discovered&&dist<=discR){f.discovered=true;f.mesh.visible=true;f.mesh.scale.set(0.01,0.01,0.01);sfxDiscover()}if(f.discovered&&dist<5&&dist>3){const pull=0.12*(1-dist/5);f.mesh.position.x+=(dx/dist)*pull;f.mesh.position.z+=(dz/dist)*pull}if(f.discovered&&dist<=3){f.collected=true;scene.remove(f.mesh);fragCounts[f.rarity]++;healPlayer(HEALTH_REGEN_PER_FRAG);const feverBonus=isInFeverZone(f.x,f.z)?FEVER_MULTIPLIER:1;const pts=3*feverBonus;score+=pts;totalFragCount=getTotalFrags();const lbl=feverBonus>1?`+${R_LBL[f.rarity]} x${FEVER_MULTIPLIER}!`:`+${R_LBL[f.rarity]} FRAGMENT`;showFloat(lbl,feverBonus>1?0xffd54f:R_HEX[f.rarity],new Vector3(f.x,3,f.z));player._cFlash=0.3;player._skinMat.emissive.setHex(feverBonus>1?0xffd54f:R_HEX[f.rarity]);sfxCollect(f.rarity);if(fragCounts[f.rarity]===3){spawnNFT(f.rarity);showUnlock(`${R_LBL[f.rarity]} CHEST SPAWNED!`);sfxUnlock();window.hhTrack&&window.hhTrack('head_unlocked',{rarity:f.rarity,map:mapIdx})}updateHud();if(socket&&mpConnected)socket.emit('frag:collected',{rarity:f.rarity,score});window.hhTrack&&window.hhTrack('fragment_collected',{rarity:f.rarity,map:mapIdx})}}
+  for(const f of fragments){if(f.collected)continue;const dx=player.position.x-f.x,dz=player.position.z-f.z;const dist=Math.sqrt(dx*dx+dz*dz);const discR=activeEffects.magnet>0?DISC_R*3:DISC_R*1.5;if(!f.discovered&&dist<=discR){f.discovered=true;f.mesh.visible=true;f.mesh.scale.set(0.01,0.01,0.01);sfxDiscover()}if(f.discovered&&dist<5&&dist>3){const pull=0.12*(1-dist/5);f.mesh.position.x+=(dx/dist)*pull;f.mesh.position.z+=(dz/dist)*pull}if(f.discovered&&dist<=3){f.collected=true;scene.remove(f.mesh);fragCounts[f.rarity]++;healPlayer(HEALTH_REGEN_PER_FRAG);const feverBonus=isInFeverZone(f.x,f.z)?FEVER_MULTIPLIER:1;const pts=3*feverBonus;score+=pts;totalFragCount=getTotalFrags();const lbl=feverBonus>1?`+${R_LBL[f.rarity]} x${FEVER_MULTIPLIER}!`:`+${R_LBL[f.rarity]} FRAGMENT`;showFloat(lbl,feverBonus>1?0xffd54f:R_HEX[f.rarity],new Vector3(f.x,3,f.z));player._cFlash=0.3;player._skinMat.emissive.setHex(feverBonus>1?0xffd54f:R_HEX[f.rarity]);sfxCollect(f.rarity);if(fragCounts[f.rarity]===3){spawnNFT(f.rarity);showUnlock(`${R_LBL[f.rarity]} CHEST SPAWNED!`);sfxUnlock();}updateHud();if(socket&&mpConnected)socket.emit('frag:collected',{rarity:f.rarity,score});}}
   } // end shadow check
   for(const f of fragments){if(!f.discovered||f.collected)continue;f.mesh.rotation.y+=dt*2;f.mesh.position.y=0.8+Math.sin(el*2.5+f.x)*0.3;if(f.mesh.scale.x<0.99){const s=MathUtils.lerp(f.mesh.scale.x,1,dt*5);f.mesh.scale.set(s,s,s)}}
 
