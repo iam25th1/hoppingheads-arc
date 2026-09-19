@@ -35,3 +35,8 @@ test('rulesFor: returns the frozen ruleset, throws on unknown', () => {
   assert.throws(() => rulesFor('classic'), /unknown mode/, 'rulesFor takes lobby modes, not aliases');
   assert.throws(() => rulesFor('nope'), /unknown mode/);
 });
+
+test('lobby wait: the arena waits 10s because bots fill it, the sandbox waits 30s for people', () => {
+  assert.equal(MODES[ARENA].waitSeconds, 10);
+  assert.equal(MODES[SANDBOX_LBS].waitSeconds, 30);
+});

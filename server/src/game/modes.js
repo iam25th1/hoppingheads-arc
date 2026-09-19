@@ -26,6 +26,7 @@ const CLASSIC_RULES = Object.freeze({
   powerups: true,    // the server spawns powerups and decides pickups
   guests: false,     // a seat needs a verified wallet
   stakeable: true,
+  waitSeconds: 10,   // bots fill the seats at countdown, so a long wait for humans is dead time
   roundMode: "arena", // rounds.mode value
 });
 
@@ -36,6 +37,7 @@ const LBS_RULES = Object.freeze({
   powerups: false,   // LBS powerups stay client side with the rest of LBS
   guests: true,      // sandbox: playable with no wallet at all
   stakeable: false,
+  waitSeconds: 30,   // no bots here; the wait is for real players
   roundMode: "sandbox-lbs-online",
 });
 
