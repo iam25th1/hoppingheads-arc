@@ -1,27 +1,10 @@
 import { Router } from "express";
 import { ethers } from "ethers";
-import crypto from "crypto";
 import { generateNonce, verifySignature, authMiddleware } from "../utils/auth.js";
 import { query } from "../db/pool.js";
 import { createRound as createRoundInMemory } from "../game/roundManager.js";
 import { createRoundOnchain } from "../services/contractService.js";
 import { THEME_KEYS } from "../game/mapGenerator.js";
-import { awardGameCredits } from "./store.js";
-
-// Verify signed session token (mirrors beta.js / twitterAuth.js)
-function verifySessionToken(token) {
-  try {
-    const secret = process.env.TWITTER_CLIENT_SECRET;
-    if (!secret || !token || typeof token !== "string") return null;
-    const [session, sig] = token.split(".");
-    if (!session || !sig) return null;
-    const expected = crypto.createHmac("sha256", secret).update(session).digest("base64url");
-    if (sig !== expected) return null;
-    const data = JSON.parse(Buffer.from(session, "base64url").toString());
-    if (Date.now() - data.ts > 7 * 24 * 60 * 60 * 1000) return null;
-    return data;
-  } catch { return null; }
-}
 
 const router = Router();
 
@@ -68,7 +51,7 @@ router.get("/leaderboard/recent", async (req, res) => {
 
 router.post("/score", async (req, res) => {
   try {
-    const { player_name, score, minted, fragments, map_index, session } = req.body;
+    const { player_name, score, minted, fragments, map_index } = req.body;
     if (!player_name || typeof score !== "number") {
       return res.status(400).json({ error: "Invalid score data" });
     }
@@ -98,30 +81,7 @@ router.post("/score", async (req, res) => {
       [safeName, safeScore, safeScore >= 300 ? 1 : 0, safeMinted, safeScore]
     );
 
-    // Award store credits if player has a valid session
-    let creditsEarned = 0;
-    if (session && typeof session === "string") {
-      try {
-        const user = verifySessionToken(session);
-        if (user && user.id) {
-          const betaResult = await query(
-            "SELECT twitter_id FROM beta_access WHERE twitter_id = $1",
-            [user.id]
-          );
-          if (betaResult.rows.length > 0) {
-            // Classic mode: 15 base + score bonus (1 per 20 pts, capped at 30)
-            creditsEarned = 15 + Math.min(30, Math.floor(safeScore / 20));
-            awardGameCredits(user.id, creditsEarned, `Classic mode (score: ${safeScore})`).catch(
-              e => console.error("[API] Classic credit award error:", e.message)
-            );
-          }
-        }
-      } catch (e) {
-        console.warn("[API] Session credit check failed:", e.message);
-      }
-    }
-
-    res.json({ ok: true, credits_earned: creditsEarned });
+    res.json({ ok: true });
   } catch (err) {
     console.error("[API] Score submit error:", err.message);
     res.status(500).json({ error: "Failed to save score" });

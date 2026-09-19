@@ -4,7 +4,6 @@
  */
 
 import { query } from "../db/pool.js";
-import { awardGameCredits } from "../routes/store.js";
 
 const TICK_RATE = 100;
 const MAX_PLAYERS = 8;
@@ -158,52 +157,9 @@ export function initGameSocket(io) {
 
       const playerIndex = lobby.players.size;
 
-      // Validate skin against whitelist, or load from store loadout
+      // Validate skin against whitelist
       let appearance;
-      let cosmeticExtras = {};
-      try {
-        // Try loading equipped store loadout (including cosmetic effects)
-        const loadoutResult = await query(
-          `SELECT sc.config AS skin_config, es.config AS eye_config, hw.config AS head_config,
-                  gc.config AS glow_config, te.config AS trail_config, nc.config AS name_config,
-                  bd.config AS badge_config
-           FROM player_loadout pl
-           LEFT JOIN store_items sc ON sc.id = pl.skin_color AND sc.category = 'skin_color'
-           LEFT JOIN store_items es ON es.id = pl.eye_style AND es.category = 'eye_style'
-           LEFT JOIN store_items hw ON hw.id = pl.headwear AND hw.category = 'headwear'
-           LEFT JOIN store_items gc ON gc.id = pl.glow_color AND gc.category = 'glow_color'
-           LEFT JOIN store_items te ON te.id = pl.trail_effect AND te.category = 'trail_effect'
-           LEFT JOIN store_items nc ON nc.id = pl.name_color AND nc.category = 'name_color'
-           LEFT JOIN store_items bd ON bd.id = pl.badge AND bd.category = 'badge'
-           WHERE pl.twitter_id = $1`,
-          [user.id]
-        );
-        if (loadoutResult.rows.length > 0) {
-          const lo = loadoutResult.rows[0];
-          const parseConf = (c) => c ? (typeof c === 'string' ? JSON.parse(c) : c) : null;
-          const sc = parseConf(lo.skin_config);
-          const ec = parseConf(lo.eye_config);
-          const hc = parseConf(lo.head_config);
-          const gc = parseConf(lo.glow_config);
-          const tc = parseConf(lo.trail_config);
-          const nc = parseConf(lo.name_config);
-          const bd = parseConf(lo.badge_config);
-          appearance = {
-            skinColor: sc ? parseInt(sc.hex, 16) || sc.hex : (skin?.skinColor || 0xff8866),
-            eyeStyle: ec?.style || skin?.eyeStyle || 'X',
-            headStyle: hc?.style || skin?.headStyle || 'Horns',
-          };
-          // Cosmetic extras (sent once on join, not per tick)
-          if (gc) { cosmeticExtras.glowColor = parseInt(gc.hex, 16) || gc.hex; cosmeticExtras.glowIntensity = gc.intensity || 0.3; }
-          if (tc) { cosmeticExtras.trailType = tc.type; cosmeticExtras.trailColor = parseInt(tc.color, 16) || tc.color; }
-          if (nc) { cosmeticExtras.nameColor = nc.hex || nc.color; }
-          if (ec?.color) cosmeticExtras.eyeColor = parseInt(ec.color, 16) || ec.color;
-          if (hc?.color) cosmeticExtras.hwColor = parseInt(hc.color, 16) || hc.color;
-          if (bd) { cosmeticExtras.badge = bd.icon || null; }
-        }
-      } catch (e) {
-        console.warn('[MP] Loadout fetch failed:', e.message);
-      }
+      const cosmeticExtras = {};
 
       if (!appearance) {
         if (skin && VALID_SKINS.includes(skin.skinColor) &&
@@ -494,38 +450,7 @@ function endRound(io, lobby) {
   console.log(`[MP] Round ended lobby ${lobby.id}. Winner: ${results[0]?.name} (${results[0]?.score})`);
 
   saveResults(results, lobby.mapIndex).catch(e => console.error('[MP] Save error:', e.message));
-  awardRoundCredits(results).catch(e => console.error('[MP] Credit award error:', e.message));
   setTimeout(() => lobbies.delete(lobby.id), 30000);
-}
-
-// Credit rewards for multiplayer rounds
-const CREDIT_REWARDS = {
-  play: 10,       // completing a round
-  first: 100,     // 1st place
-  second: 50,     // 2nd place
-  third: 25,      // 3rd place
-  scoreRate: 0.1, // 1 credit per 10 score points
-  scoreCap: 50,   // max score bonus
-};
-
-async function awardRoundCredits(results) {
-  for (const r of results) {
-    if (!r.twitterId) continue;
-    let credits = CREDIT_REWARDS.play;
-
-    if (r.placement === 1) credits += CREDIT_REWARDS.first;
-    else if (r.placement === 2) credits += CREDIT_REWARDS.second;
-    else if (r.placement === 3) credits += CREDIT_REWARDS.third;
-
-    const scoreBonus = Math.min(CREDIT_REWARDS.scoreCap, Math.floor(r.score * CREDIT_REWARDS.scoreRate));
-    credits += scoreBonus;
-
-    const reason = `MP round #${r.placement} (score: ${r.score})`;
-    const newBal = await awardGameCredits(r.twitterId, credits, reason);
-    if (newBal !== null) {
-      console.log(`[MP] Awarded ${credits} credits to ${r.name} (bal: ${newBal})`);
-    }
-  }
 }
 
 async function saveResults(results, mapIndex) {

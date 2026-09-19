@@ -51,17 +51,4 @@ export async function initDb() {
   console.log("[DB] Schema initialized");
 }
 
-export async function initStoreDb() {
-  const fs = await import("fs");
-  const path = await import("path");
-  const { fileURLToPath } = await import("url");
-  const __dirname = path.dirname(fileURLToPath(import.meta.url));
-  const storeSchema = fs.readFileSync(path.join(__dirname, "store-schema.sql"), "utf-8");
-  await pool.query(storeSchema);
-  // Seed premium items (ON CONFLICT DO NOTHING, safe to re-run)
-  const premiumSeed = fs.readFileSync(path.join(__dirname, "premium-items-seed.sql"), "utf-8");
-  await pool.query(premiumSeed);
-  console.log("[DB] Store schema + items initialized");
-}
-
 export default pool;

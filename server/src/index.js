@@ -11,8 +11,7 @@ import apiRoutes from "./routes/api.js";
 import betaRoutes from "./routes/beta.js";
 import trackRoutes from "./routes/track.js";
 import metricsRoutes from "./routes/metrics.js";
-import storeRoutes from "./routes/store.js";
-import { initDb, initStoreDb } from "./db/pool.js";
+import { initDb } from "./db/pool.js";
 import { initContracts } from "./services/contractService.js";
 import { initGameSocket } from "./ws/gameSocket.js";
 import { setupTwitterAuth } from "./utils/twitterAuth.js";
@@ -104,11 +103,6 @@ app.get('/privacy', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'landing', 'privacy.html'));
 });
 
-// Store page
-app.get('/store', (req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'landing', 'store.html'));
-});
-
 // Actual game served at /game (behind gate)
 app.use("/game", express.static(path.join(__dirname, "..", "public")));
 
@@ -156,7 +150,6 @@ setupTwitterAuth(app);
 app.use("/api/beta", betaRoutes);
 app.use("/api/track", trackRoutes);
 app.use("/api/metrics", metricsRoutes);
-app.use("/api/store", storeRoutes);
 
 // API routes
 app.use("/api", apiRoutes);
@@ -205,8 +198,7 @@ initGameSocket(io);
 async function boot() {
   try {
     await initDb();
-    await initStoreDb();
-    console.log("[Boot] Database ready (store schema included)");
+    console.log("[Boot] Database ready");
   } catch (err) {
     console.error("[Boot] Database init failed:", err.message);
     console.warn("[Boot] Continuing without database (dev mode)");

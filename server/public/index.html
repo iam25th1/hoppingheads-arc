@@ -112,27 +112,11 @@ body{background:#0f0a1a;overflow:hidden;font-family:'Silkscreen',monospace}
 .lb-row:first-child .lb-name{color:#ffd54f}
 .lb-row:first-child .lb-rank{color:#ffd54f}
 /* In-game Loadout */
-.lo-tabs{display:flex;gap:2px;flex-wrap:wrap;justify-content:center;margin-bottom:clamp(6px,1vh,10px)}
-.lo-tab{font-family:'Press Start 2P',monospace;font-size:clamp(6px,0.8vw,8px);color:#5a5478;padding:4px 8px;cursor:pointer;border:1px solid transparent;transition:all 0.15s;letter-spacing:1px}
-.lo-tab:hover{color:#e8e4f0}
-.lo-tab.active{color:#ffd54f;border-color:#3d2560;background:rgba(138,90,204,0.1)}
 .lbs-diff{font-family:'Press Start 2P',monospace;font-size:clamp(8px,1vw,10px);padding:8px 16px;cursor:pointer;border:2px solid #3d3458;border-radius:6px;background:rgba(30,28,58,0.6);color:#5a5478;letter-spacing:1px;transition:all 0.2s;user-select:none;-webkit-user-select:none;text-align:center}
 .lbs-diff:hover{border-color:#5a5478;color:#e8e4f0}
 .lbs-diff.active{border-color:#ffd54f;background:rgba(255,213,79,0.12);color:#ffd54f;text-shadow:0 0 10px rgba(255,213,79,0.4);box-shadow:0 0 12px rgba(255,213,79,0.15)}
 .lbs-diff[data-diff="easy"].active{border-color:#5cc06a;background:rgba(92,192,106,0.12);color:#5cc06a;text-shadow:0 0 10px rgba(92,192,106,0.4);box-shadow:0 0 12px rgba(92,192,106,0.15)}
 .lbs-diff[data-diff="hard"].active{border-color:#ff6b6b;background:rgba(255,107,107,0.12);color:#ff6b6b;text-shadow:0 0 10px rgba(255,107,107,0.4);box-shadow:0 0 12px rgba(255,107,107,0.15)}
-.lo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(clamp(70px,10vw,100px),1fr));gap:clamp(4px,0.6vw,8px);max-height:clamp(120px,22vh,200px);overflow-y:auto;scrollbar-width:thin;scrollbar-color:#4d4080 transparent;padding:2px}
-.lo-item{background:rgba(20,16,40,0.8);border:1px solid #3d2560;padding:clamp(4px,0.6vh,8px);cursor:pointer;text-align:center;transition:all 0.15s}
-.lo-item:hover{border-color:#8a5acc;transform:translateY(-1px)}
-.lo-item.equipped{border-color:#5cc06a;background:rgba(92,192,106,0.08);box-shadow:0 0 8px rgba(92,192,106,0.15)}
-.lo-eq-badge{font-family:'Press Start 2P',monospace;font-size:clamp(5px,0.6vw,6px);color:#5a5478;text-align:center;margin-top:4px;padding:2px 4px;border:1px solid #3d2560;letter-spacing:1px}
-.lo-eq-badge.equipped{color:#5cc06a;border-color:#5cc06a;background:rgba(92,192,106,0.1)}
-.lo-item-name{font-family:'Press Start 2P',monospace;font-size:clamp(5px,0.7vw,7px);color:#e8e4f0;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.lo-item-rarity{font-size:5px;color:#5a5478;letter-spacing:1px;text-transform:uppercase}
-.lo-swatch{width:clamp(20px,3vw,32px);height:clamp(20px,3vw,32px);margin:4px auto;border-radius:3px;border:1px solid rgba(255,255,255,0.1)}
-.lo-icon{font-size:clamp(14px,2vw,20px);margin:4px auto;line-height:1}
-.lo-empty{color:#5a5478;font-size:clamp(7px,0.9vw,9px);text-align:center;padding:20px 8px;grid-column:1/-1}
-.lo-balance{font-family:'Press Start 2P',monospace;font-size:clamp(7px,0.9vw,9px);color:#ffd54f;text-align:center;margin-bottom:clamp(4px,0.6vh,8px)}
 @keyframes vicFall{0%{transform:translateY(0) rotate(0deg);opacity:1}100%{transform:translateY(80vh) rotate(720deg);opacity:0}}
 @keyframes vicFlash{0%{opacity:1}100%{opacity:0}}
 @keyframes vicHop{0%{transform:translateY(0)}30%{transform:translateY(-18px) scale(1.05)}50%{transform:translateY(0) scale(0.98)}70%{transform:translateY(-8px) scale(1.02)}100%{transform:translateY(0) scale(1)}}
@@ -419,7 +403,6 @@ body.in-menu .mob-util-btn{display:none}
       <div class="menu-item" data-action="online-menu">PLAY ONLINE</div>
       <div class="menu-item" data-action="tutorial">TUTORIAL</div>
       <div class="menu-item menu-skin" data-action="cycle-skin">SKIN: <span id="skin-name">CORAL</span></div>
-      <div class="menu-item" data-action="my-items">MY ITEMS</div>
       <div class="menu-item" data-action="store" style="color:#ffd54f">STORE</div>
       <div class="menu-item" data-action="leaderboard">LEADERBOARD</div>
       <div class="menu-item" data-action="settings">SETTINGS</div>
@@ -533,16 +516,6 @@ body.in-menu .mob-util-btn{display:none}
       <div class="menu-item" data-action="back">BACK</div>
     </div>
 
-    <!-- MY ITEMS -->
-    <div id="menu-my-items" class="menu-page" style="display:none">
-      <div class="menu-label">MY ITEMS</div>
-      <div id="lo-balance" class="lo-balance"></div>
-      <canvas id="lo-preview" width="100" height="110" style="display:block;margin:4px auto;image-rendering:pixelated;border:1px solid #3d2560;border-radius:3px"></canvas>
-      <div id="lo-tabs" class="lo-tabs"></div>
-      <div id="lo-grid" class="lo-grid" style="max-height:clamp(80px,15vh,140px)"></div>
-      <div class="menu-sub" style="text-align:center;margin-top:4px"><a href="javascript:void(0)" data-action="store" style="color:#ffd54f;font-size:9px;letter-spacing:1px">VISIT STORE FOR MORE</a></div>
-      <div class="menu-item" data-action="back">BACK</div>
-    </div>
 
   </div>
 </div>
@@ -4902,208 +4875,21 @@ document.getElementById('lobby-map').textContent=MAP_NAMES[mapIdx];
 document.getElementById('classic-map').textContent=MAP_NAMES[mapIdx];
 document.getElementById('lbs-map').textContent=MAP_NAMES[mapIdx];
 
-// Store loadout cache
-let _storeLoadout=null;
-let _storeLoadoutLoaded=false;
-
-// ==== Single source of truth for loadout parsing ====
-// Every new field added to store items needs to be handled in exactly ONE place: here.
-// The workshop emits configs with mixed conventions (some use `type`, some use `style`,
-// colors can be `0xffd700` strings or raw hex). This parser normalizes everything.
-function _parseHex(v){
-  if(v==null)return null;
-  if(typeof v==='number')return v;
-  const s=String(v).replace('0x','').replace('#','');
-  const n=parseInt(s,16);
-  return isNaN(n)?null:n;
-}
-function _parseJson(v){
-  if(v==null)return null;
-  if(typeof v==='string'){try{return JSON.parse(v)}catch(e){return null}}
-  return v;
-}
-function parseLoadoutResponse(lo){
-  if(!lo)return null;
-  const out={};
-  // Slugs for equipped-checks
-  out.skinSlug=lo.skin_slug||null;
-  out.skinColorSlug=lo.skin_color_slug||null;
-  out.eyeStyleSlug=lo.eye_style_slug||null;
-  out.headwearSlug=lo.headwear_slug||null;
-  out.trailSlug=lo.trail_effect_slug||null;
-  out.victorySlug=lo.victory_anim_slug||null;
-
-  // Full skin package (overrides individual skin_color)
-  const sk=_parseJson(lo.skin_config);
-  if(sk){
-    out.skinColor=_parseHex(sk.skinColor||sk.color)||0xff8866;
-    if(sk.eyes)out.eyeStyle=sk.eyes;
-    if(sk.head)out.headStyle=sk.head;
-    if(sk.emissive)out.emissive=_parseHex(sk.emissive);
-    if(sk.emissiveI!=null)out.emissiveI=sk.emissiveI;
-    // Animated particles (fire/glitch/cosmic/ice/electric/etc) are reserved for
-    // epic and legendary rarity. Common/uncommon/rare skins keep their base
-    // config but the animType is stripped here so it never reaches mkBlob.
-    const rarity=(lo.skin_rarity||'').toLowerCase();
-    if(sk.animType&&(rarity==='epic'||rarity==='legendary'))out.animType=sk.animType;
-    if(sk.eyeGlow)out.eyeColor=_parseHex(sk.eyeGlow);
-    if(sk.spikeColor)out.spikeColor=_parseHex(sk.spikeColor);
-    if(sk.crownColor)out.crownColor=_parseHex(sk.crownColor);
-    if(sk.hornColor)out.hornColor=_parseHex(sk.hornColor);
-    if(sk.blushColor)out.blushColor=_parseHex(sk.blushColor);
-    if(sk.wireframe)out.wireframe=true;
-    if(sk.wireColor)out.wireColor=_parseHex(sk.wireColor);
-    if(sk.neonGlow)out.neonGlow=true;
-    if(sk.metallic)out.metallic=true;
-    if(sk.transparent){out.transparent=true;if(sk.opacity!=null)out.opacity=sk.opacity}
-    out.fullSkin=true;
-  }
-
-  // Standalone skin color (only used if no full skin equipped)
-  const sc=_parseJson(lo.skin_color_config);
-  if(sc&&!out.fullSkin){
-    out.skinColor=_parseHex(sc.hex)||0xff8866;
-    if(sc.emissive)out.emissive=_parseHex(sc.emissive);
-  }
-
-  // Eye style - server uses `style` field
-  const ec=_parseJson(lo.eye_style_config);
-  if(ec){
-    out.eyeStyle=ec.style||ec.type;
-    if(ec.color)out.eyeColor=_parseHex(ec.color);
-  }
-
-  // Headwear - MIXED: existing items use `type`, workshop emits `style`. Accept both.
-  const hc=_parseJson(lo.headwear_config);
-  if(hc){
-    out.headStyle=hc.type||hc.style;
-    if(hc.color)out.hwColor=_parseHex(hc.color);
-    if(hc.spots)out.hwSpots=_parseHex(hc.spots);
-  }
-
-  // Glow color
-  const gc=_parseJson(lo.glow_color_config);
-  if(gc){
-    out.glowColor=_parseHex(gc.hex);
-    out.glowIntensity=gc.intensity!=null?gc.intensity:0.3;
-  }
-
-  // Trail effect
-  const tc=_parseJson(lo.trail_effect_config);
-  if(tc){
-    out.trailType=tc.type;
-    out.trailColor=_parseHex(tc.color)||0xffd54f;
-  }
-
-  // Name color
-  const nc=_parseJson(lo.name_color_config);
-  if(nc){out.nameColor=nc.hex||nc.color}
-
-  // Badge
-  const bd=_parseJson(lo.badge_config);
-  if(bd){out.badge=bd.icon||null}
-
-  // Victory emote
-  const va=_parseJson(lo.victory_anim_config);
-  if(va){out.victoryAnim=va.type||null}
-
-  return out;
-}
-
-// Fetch store loadout on page load (non-blocking)
-// Also fetches owned emotes so the in-match emote wheel has content.
+// Owned emotes for the in-match emote wheel. Populated by nothing at the moment: the
+// store that sold them is gone. Phase 1 decides what everyone gets by default.
 let _ownedEmotes=[]; // {slug, name, type}
-(function loadStoreLoadout(){
-  const sess=localStorage.getItem('hh_session');
-  if(!sess) return;
-  // Emote inventory (parallel, non-blocking)
-  fetch('/api/store/inventory?category=victory_anim',{headers:{'x-session':sess}})
-    .then(r=>r.json())
-    .then(d=>{
-      if(!d||!d.items)return;
-      _ownedEmotes=d.items.filter(it=>!it.locked).map(it=>{
-        let cfg=it.config;try{if(typeof cfg==='string')cfg=JSON.parse(cfg)}catch(e){cfg={}}
-        return{slug:it.slug,name:it.name,type:(cfg&&cfg.type)||null};
-      }).filter(e=>e.type);
-    }).catch(()=>{});
-  fetch('/api/store/loadout',{headers:{'x-session':sess}})
-    .then(r=>r.json())
-    .then(d=>{
-      _storeLoadoutLoaded=true;
-      if(!d.loadout) return;
-      _storeLoadout=parseLoadoutResponse(d.loadout);
-      // Update skin name display if store loadout active
-      if(_storeLoadout&&(_storeLoadout.skinColor||_storeLoadout.eyeStyle||_storeLoadout.headStyle)){
-        document.getElementById('skin-name').textContent='CUSTOM';
-        document.getElementById('skin-name').style.color='#8a5acc';
-      }
-      // Apply store loadout to local player mesh so trails/glows/particles
-      // show even in solo LHS mode (previously only applied via multiplayer sync).
-      try{
-        if(typeof updateLocalPlayerSkin==='function'&&player){
-          updateLocalPlayerSkin({
-            skinColor:_storeLoadout.skinColor,
-            eyeStyle:_storeLoadout.eyeStyle,
-            headStyle:_storeLoadout.headStyle,
-            eyeColor:_storeLoadout.eyeColor,
-            glowColor:_storeLoadout.glowColor,
-            glowIntensity:_storeLoadout.glowIntensity,
-            trailType:_storeLoadout.trailType,
-            trailColor:_storeLoadout.trailColor,
-            // Pass through the particle + color fields so equipped skin looks like store preview
-            animType:_storeLoadout.animType,
-            emissive:_storeLoadout.emissive,
-            emissiveI:_storeLoadout.emissiveI,
-            spikeColor:_storeLoadout.spikeColor,
-            crownColor:_storeLoadout.crownColor,
-            hornColor:_storeLoadout.hornColor,
-            blushColor:_storeLoadout.blushColor,
-            hwColor:_storeLoadout.hwColor,
-          });
-        }
-      }catch(e){console.warn('[loadout apply]',e)}
-      console.log('[Store] Loadout loaded:', _storeLoadout);
-    })
-    .catch(()=>{_storeLoadoutLoaded=true});
-})();
 
 // Apply selected skin to local player
 function applyLocalSkin(){
-  if(_storeLoadout&&(_storeLoadout.skinColor||_storeLoadout.eyeStyle||_storeLoadout.headStyle)){
-    // Use store loadout - forward ALL fields so in-game player matches store preview
-    const s=SKINS[selectedSkin]; // fallback values
-    updateLocalPlayerSkin({
-      skinColor:_storeLoadout.skinColor||s.color,
-      eyeStyle:_storeLoadout.eyeStyle||s.eyes,
-      headStyle:_storeLoadout.headStyle||s.head,
-      glowColor:_storeLoadout.glowColor||null,
-      glowIntensity:_storeLoadout.glowIntensity||0.3,
-      trailType:_storeLoadout.trailType||null,
-      trailColor:_storeLoadout.trailColor||null,
-      eyeColor:_storeLoadout.eyeColor||null,
-      hwColor:_storeLoadout.hwColor||null,
-      // Legendary + accent fields (were silently dropped - why in-game looked flat)
-      animType:_storeLoadout.animType||null,
-      emissive:_storeLoadout.emissive||null,
-      emissiveI:_storeLoadout.emissiveI||null,
-      spikeColor:_storeLoadout.spikeColor||null,
-      crownColor:_storeLoadout.crownColor||null,
-      hornColor:_storeLoadout.hornColor||null,
-      blushColor:_storeLoadout.blushColor||null,
-    });
-  } else {
-    const s=SKINS[selectedSkin];
-    updateLocalPlayerSkin({skinColor:s.color,eyeStyle:s.eyes,headStyle:s.head});
-  }
+  const s=SKINS[selectedSkin];
+  updateLocalPlayerSkin({skinColor:s.color,eyeStyle:s.eyes,headStyle:s.head});
 }
 
 // Name tag (canvas sprite above blob)
 function getPlayerNameColor(){
-  if(_storeLoadout&&_storeLoadout.nameColor) return _storeLoadout.nameColor;
   return '#ffd54f';
 }
 function getPlayerBadge(){
-  if(_storeLoadout&&_storeLoadout.badge) return _storeLoadout.badge;
   return null;
 }
 const _nameTags=[];
@@ -5138,289 +4924,6 @@ function updateNameTags(){
     nt.el.style.top=(-wp.y*hh+hh)+'px';
   }
 }
-
-// ======= IN-GAME LOADOUT =======
-let _loInventory=[];
-let _loCategory='skin';
-const LO_CATS=[
-  {key:'skin',label:'SKINS'},{key:'eye_style',label:'EYES'},{key:'headwear',label:'HEAD'},
-  {key:'trail_effect',label:'TRAIL'},{key:'victory_anim',label:'EMOTES'}
-];
-
-async function loadMyItemsPage(){
-  const sess=localStorage.getItem('hh_session');
-  // Balance
-  const balEl=document.getElementById('lo-balance');
-  if(sess){
-    try{
-      const r=await fetch('/api/store/balance',{headers:{'x-session':sess}});
-      const d=await r.json();
-      balEl.textContent='\u25CF '+(d.balance||0).toLocaleString()+' CREDITS';
-    }catch(e){balEl.textContent=''}
-  }else{balEl.textContent=''}
-
-  // Render blob preview
-  renderItemsPreview();
-
-  // Tabs
-  const tabsEl=document.getElementById('lo-tabs');
-  tabsEl.innerHTML=LO_CATS.map(c=>'<div class="lo-tab'+(_loCategory===c.key?' active':'')+'" data-locat="'+c.key+'">'+c.label+'</div>').join('');
-
-  // Fetch inventory (owned items)
-  if(sess){
-    try{
-      if(_loCategory==='skin'){
-        // SKINS tab: fetch both skin + skin_color categories and merge
-        const [r1,r2]=await Promise.all([
-          fetch('/api/store/inventory?category=skin',{headers:{'x-session':sess}}),
-          fetch('/api/store/inventory?category=skin_color',{headers:{'x-session':sess}})
-        ]);
-        const d1=await r1.json(), d2=await r2.json();
-        _loInventory=[...(d1.items||[]),...(d2.items||[])];
-      }else{
-        const r=await fetch('/api/store/inventory?category='+_loCategory,{headers:{'x-session':sess}});
-        const d=await r.json();
-        _loInventory=d.items||[];
-      }
-    }catch(e){_loInventory=[]}
-  }else{_loInventory=[]}
-
-  renderMyItemsGrid();
-}
-
-// Mini blob preview on MY ITEMS page
-let _itemsPreviewInit=false;
-let _itemsPreviewScene,_itemsPreviewCam,_itemsPreviewRenderer,_itemsPreviewBlob;
-let _itemsPreviewRAF=null;
-function renderItemsPreview(){
-  const canvas=document.getElementById('lo-preview');
-  if(!canvas)return;
-  if(!_itemsPreviewInit){
-    _itemsPreviewScene=new Scene();
-    _itemsPreviewCam=new PerspectiveCamera(35,100/110,0.1,50);
-    _itemsPreviewCam.position.set(0,1.2,4.5);_itemsPreviewCam.lookAt(0,0.8,0);
-    _itemsPreviewRenderer=new WebGLRenderer({canvas,antialias:true,alpha:true});
-    _itemsPreviewRenderer.setSize(100,110);_itemsPreviewRenderer.setPixelRatio(1);
-    _itemsPreviewRenderer.setClearColor(0x0a0614,1);
-    const light=new DirectionalLight(0xffffff,0.9);light.position.set(2,4,3);_itemsPreviewScene.add(light);
-    _itemsPreviewScene.add(new AmbientLight(0x404060,0.6));
-    _itemsPreviewInit=true;
-  }
-  // Build blob from current loadout
-  if(_itemsPreviewBlob)_itemsPreviewScene.remove(_itemsPreviewBlob);
-  const lo=_storeLoadout||{};
-  const s=SKINS[selectedSkin];
-  const sc=lo.skinColor||s.color;
-  const ey=lo.eyeStyle||s.eyes;
-  const hw=lo.headStyle||s.head;
-  // Pass the FULL loadout through to mkBlob so legendary particle systems (fire, glitch, cosmic)
-  // and trails actually get created. Previously only glowColor/eyeColor/hwColor were forwarded,
-  // so legendary skins rendered flat with no particles.
-  const extras={};
-  if(lo.glowColor){extras.glowColor=lo.glowColor;extras.glowIntensity=lo.glowIntensity||0.3}
-  if(lo.eyeColor)extras.eyeColor=lo.eyeColor;
-  if(lo.hwColor)extras.hwColor=lo.hwColor;
-  if(lo.animType)extras.animType=lo.animType;
-  if(lo.emissive)extras.em=lo.emissive;
-  if(lo.emissiveI)extras.emI=lo.emissiveI;
-  if(lo.spikeColor)extras.spikeColor=lo.spikeColor;
-  if(lo.crownColor)extras.crownColor=lo.crownColor;
-  if(lo.hornColor)extras.hornColor=lo.hornColor;
-  if(lo.blushColor)extras.blushColor=lo.blushColor;
-  if(lo.trailType){extras.trailType=lo.trailType;extras.trailColor=lo.trailColor||0xffd54f}
-  _itemsPreviewBlob=mkBlob(sc,ey,hw,false,extras);
-  _itemsPreviewScene.add(_itemsPreviewBlob);
-  // Give the preview its own clock for particle animation
-  let _ipvTime=0;
-  // Cancel previous spin loop
-  if(_itemsPreviewRAF) cancelAnimationFrame(_itemsPreviewRAF);
-  function spinPreview(){
-    if(!document.getElementById('menu-my-items')||document.getElementById('menu-my-items').style.display==='none'){_itemsPreviewRAF=null;return}
-    _itemsPreviewRAF=requestAnimationFrame(spinPreview);
-    _ipvTime+=0.016;
-    if(_itemsPreviewBlob){
-      _itemsPreviewBlob.rotation.y+=0.012;
-      // Animate legendary skin particles (fire, glitch, cosmic) so preview matches store
-      if(_itemsPreviewBlob._particles){
-        for(let pi=0;pi<_itemsPreviewBlob._particles.length;pi++){
-          const pp=_itemsPreviewBlob._particles[pi];
-          if(pp._spd!==undefined){
-            pp._life+=0.016*pp._spd*0.3;
-            if(pp._life>1)pp._life=0;
-            pp.position.x=pp._bx+Math.sin(_ipvTime*2+pp._off)*0.1;
-            pp.position.y=0.3+pp._life*1.8;
-            pp.position.z=pp._bz+Math.cos(_ipvTime*2+pp._off)*0.1;
-            if(pp.material)pp.material.opacity=1.0*(1-pp._life);
-          }else if(pp._gt!==undefined){
-            pp._gt+=0.016*pp._gs;
-            pp.visible=(Math.sin(pp._gt)>0);
-          }else if(pp._oR!==undefined){
-            const ang=pp._oO+_ipvTime*pp._oS;
-            pp.position.x=Math.cos(ang)*pp._oR;
-            pp.position.y=0.85+pp._oT+Math.sin(_ipvTime*2+pp._oO)*0.1;
-            pp.position.z=Math.sin(ang)*pp._oR;
-          }
-        }
-      }
-      if(_itemsPreviewBlob._cosmicRing)_itemsPreviewBlob._cosmicRing.rotation.z+=0.01;
-      // Trail particles (flag blob as moving so trail spawns)
-      _itemsPreviewBlob._moving=true;
-      if(typeof updateTrail==='function')updateTrail(_itemsPreviewBlob,0.016);
-    }
-    updatePropeller(_itemsPreviewBlob,0.016);
-    updateAura(_itemsPreviewBlob,0.016);
-    _itemsPreviewRenderer.render(_itemsPreviewScene,_itemsPreviewCam);
-  }
-  spinPreview();
-}
-
-function renderMyItemsGrid(){
-  const grid=document.getElementById('lo-grid');
-  // For SKINS tab, show both skin + skin_color; others filter by _loCategory
-  const items=_loCategory==='skin'
-    ?_loInventory.filter(i=>i.category==='skin'||i.category==='skin_color')
-    :_loInventory.filter(i=>i.category===_loCategory);
-  if(items.length===0){
-    grid.innerHTML='<div class="lo-empty">NO ITEMS'+(localStorage.getItem('hh_session')?'':' (CONNECT X FIRST)')+'</div>';
-    return;
-  }
-  grid.innerHTML=items.map(item=>{
-    const config=typeof item.config==='string'?JSON.parse(item.config):item.config;
-    const isLocked=item.locked;
-    const cat=item.category; // actual DB category (skin or skin_color)
-
-    // Equipped check - use the item's real category
-    const isEquipped=!isLocked&&_storeLoadout&&(
-      (cat==='skin'&&_storeLoadout.skinSlug===item.slug)||
-      (cat==='skin_color'&&_storeLoadout.skinColorSlug===item.slug)||
-      (cat==='eye_style'&&_storeLoadout.eyeStyleSlug===item.slug)||
-      (cat==='headwear'&&_storeLoadout.headwearSlug===item.slug)||
-      (cat==='trail_effect'&&_storeLoadout.trailSlug===item.slug)||
-      (cat==='victory_anim'&&_storeLoadout.victorySlug===item.slug)
-    );
-
-    let preview='';
-    if(cat==='skin'){
-      // Full skin package - show color swatch with tier badge
-      const hex=config&&config.skinColor?String(config.skinColor).replace('0x','#'):'#ff8866';
-      preview='<div class="lo-swatch" style="background:'+hex+';box-shadow:0 0 12px '+hex+'60"></div>';
-    }else if(cat==='skin_color'){
-      const hex=config&&config.hex?String(config.hex).replace('0x','#'):'#ff8866';
-      preview='<div class="lo-swatch" style="background:'+hex+';box-shadow:0 0 8px '+hex+'40"></div>';
-    }else if(cat==='eye_style'){
-      const map={X:'X_X',Dots:'. .',Slit:'- -',Open:'O O',Laser:'> >',Diamond:'\u25C7 \u25C7',Void:'\u25CB \u25CB',Hypno:'@ @',Hellfire:'\u2666 \u2666'};
-      preview='<div class="lo-icon" style="font-family:monospace;font-size:10px;color:#e8e4f0">'+(config&&map[config.style]||'? ?')+'</div>';
-    }else if(cat==='headwear'){
-      const map={Horns:'\u2666',Crown:'\u265B',Spike:'\u25B2',Antenna:'\u25CF',Ears:'\u25A0',Mohawk:'\u25B2\u25B2',Halo:'\u25CB',Visor:'\u25AC',Wings:'\u2660',StormHorns:'\u26A1'};
-      preview='<div class="lo-icon" style="color:#ffd54f">'+(config&&map[config.type||config.style]||'?')+'</div>';
-    }else if(cat==='trail_effect'){
-      const c=config&&config.color||'0xffd54f';
-      const hexStr=String(c).replace('0x','#');
-      preview='<div class="lo-icon" style="color:'+hexStr+'">\u2022\u2022\u2022</div>';
-    }else if(cat==='victory_anim'){
-      const vMap={spin:'\u21BB',stomp:'\u2B07',shockwave:'\u26A1',confetti:'\u2728',ascend:'\u2B06'};
-      preview='<div class="lo-icon" style="color:#ffd54f;font-size:20px">'+(config&&vMap[config.type]||'\u2728')+'</div>';
-    }else{
-      preview='<div class="lo-icon" style="color:#8a5acc">?</div>';
-    }
-
-    const eqLabel=isLocked
-      ?'<div class="lo-eq-badge" style="color:#5a5478;border-color:#3d3458">LOCKED</div>'
-      :isEquipped
-      ?'<div class="lo-eq-badge equipped">\u2713 EQUIPPED</div>'
-      :'<div class="lo-eq-badge">EQUIP</div>';
-
-    // Use item.category (not _loCategory) for equip actions
-    return '<div class="lo-item'+(isEquipped?' equipped':'')+'" data-loslug="'+item.slug+'" data-locat="'+cat+'">'+
-      preview+
-      '<div class="lo-item-name">'+item.name+'</div>'+
-      (item.rarity&&item.rarity!=='common'?'<div style="font-family:\'JetBrains Mono\',monospace;font-size:7px;color:'+(item.rarity==='legendary'?'#ffd700':item.rarity==='epic'?'#c840ff':'#4fa8d8')+';letter-spacing:1px;margin-bottom:2px">'+item.rarity.toUpperCase()+'</div>':'')+
-      eqLabel+
-    '</div>';
-  }).join('');
-}
-
-// MY ITEMS page event delegation
-document.getElementById('menu-my-items').addEventListener('click',async function(e){
-  // Tab click
-  const tab=e.target.closest('.lo-tab');
-  if(tab&&tab.dataset.locat){
-    _loCategory=tab.dataset.locat;
-    loadMyItemsPage();
-    return;
-  }
-
-  // Store link
-  if(e.target.dataset&&e.target.dataset.action==='store'){
-    const s=localStorage.getItem('hh_session');
-    const storeUrl='https://hoppingheads.fun/store'+(s?'?session='+encodeURIComponent(s):'');
-    window.open(storeUrl,'_blank');
-    return;
-  }
-
-  // Item click (equip/unequip)
-  const item=e.target.closest('.lo-item');
-  if(!item) return;
-  // Locked items can't be equipped
-  if(item.querySelector('.lo-eq-badge')&&item.querySelector('.lo-eq-badge').textContent==='LOCKED') return;
-  const slug=item.dataset.loslug;
-  const cat=item.dataset.locat;
-  const sess=localStorage.getItem('hh_session');
-  if(!sess) return;
-
-  const isEquipped=item.classList.contains('equipped');
-
-  // If equipping a full skin, unequip individual skin_color (and vice versa)
-  // The server handles this per-slot, so we just send the right category
-
-  try{
-    const r=await fetch('/api/store/equip',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','x-session':sess},
-      body:JSON.stringify({slot:cat,item_slug:isEquipped?null:slug})
-    });
-    const d=await r.json();
-    if(d.ok){
-      // Refresh loadout from server
-      try{
-        const lr=await fetch('/api/store/loadout',{headers:{'x-session':sess}});
-        const ld=await lr.json();
-        if(ld.loadout){
-          _storeLoadout=parseLoadoutResponse(ld.loadout);
-          const hasAny=_storeLoadout&&(_storeLoadout.skinColor||_storeLoadout.eyeStyle||_storeLoadout.headStyle);
-          if(hasAny){
-            document.getElementById('skin-name').textContent='CUSTOM';
-            document.getElementById('skin-name').style.color='#8a5acc';
-          }else{
-            _storeLoadout=null;
-            document.getElementById('skin-name').textContent=SKINS[selectedSkin].name;
-            document.getElementById('skin-name').style.color=SKINS[selectedSkin].css;
-          }
-        }else{
-          _storeLoadout=null;
-          document.getElementById('skin-name').textContent=SKINS[selectedSkin].name;
-          document.getElementById('skin-name').style.color=SKINS[selectedSkin].css;
-        }
-      }catch(e){}
-
-      // Live-update player blob + cabinet + preview
-      applyLocalSkin();
-      if(arcadeCab&&arcadeCab._blobs&&arcadeCab._blobs[0]){
-        const s=_storeLoadout||SKINS[selectedSkin];
-        const sc=_storeLoadout?(_storeLoadout.skinColor||0xff8866):s.color;
-        const ey=_storeLoadout?(_storeLoadout.eyeStyle||'X'):(s.eyes||'X');
-        const hw=_storeLoadout?(_storeLoadout.headStyle||'Horns'):(s.head||'Horns');
-        const nb=mkBlob(sc,ey,hw,false);
-        const b=arcadeCab._blobs[0];
-        while(b.children.length>0)b.remove(b.children[0]);
-        while(nb.children.length>0){const c=nb.children[0];nb.remove(c);b.add(c)}
-        b._skinMat=nb._skinMat;
-      }
-      renderMyItemsGrid();
-      renderItemsPreview(); // refresh blob preview
-    }
-  }catch(er){}
-});
 
 // ======= COIN DRAG SYSTEM =======
 const coin=document.getElementById('coin');
@@ -5688,12 +5191,6 @@ document.querySelectorAll('.menu-item').forEach(item=>{
       startGame();
     }else if(action==='settings'){
       showMenuPage('settings');
-    }else if(action==='store'){
-      window.hhTrack&&window.hhTrack('store_click',{from:'game'});
-      var s=localStorage.getItem('hh_session');
-      var storeUrl='https://hoppingheads.fun/store';
-      if(s) storeUrl+='?session='+encodeURIComponent(s);
-      window.open(storeUrl,'_blank');
     }else if(action==='leaderboard'){
       showMenuPage('leaderboard');
       fetchLeaderboard();
@@ -5715,7 +5212,6 @@ document.querySelectorAll('.menu-item').forEach(item=>{
     }else if(action==='next-map'){
       switchMapInPlace((mapIdx+1)%MAP_NAMES.length);
     }else if(action==='cycle-skin'){
-      _storeLoadout=null;
       selectedSkin=(selectedSkin+1)%SKINS.length;
       sessionStorage.setItem('skinIdx',selectedSkin);
       document.getElementById('skin-name').textContent=SKINS[selectedSkin].name;
@@ -5729,9 +5225,6 @@ document.querySelectorAll('.menu-item').forEach(item=>{
         while(nb.children.length>0){const c=nb.children[0];nb.remove(c);b.add(c)}
         b._skinMat=nb._skinMat;
       }
-    }else if(action==='my-items'){
-      showMenuPage('my-items');
-      loadMyItemsPage();
     }else if(action==='toggle-sound'){
       soundEnabled=!soundEnabled;
       document.getElementById('snd-toggle').textContent='SOUND: '+(soundEnabled?'ON':'OFF');
@@ -6114,18 +5607,6 @@ function useRadar(){
 function submitClassicScore(sc,minted,frags){
   const name=xUser?'@'+xUser.username:'ANON';
   fetch('/api/score',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({player_name:name,score:sc,minted:minted,fragments:frags,map_index:mapIdx,session:localStorage.getItem('hh_session')||null})})
-    .then(r=>r.json())
-    .then(d=>{
-      if(d.credits_earned&&d.credits_earned>0){
-        // Show credits earned toast
-        const toast=document.createElement('div');
-        toast.style.cssText='position:fixed;bottom:80px;left:50%;transform:translateX(-50%);font-family:"Press Start 2P",monospace;font-size:10px;color:#ffd54f;background:rgba(10,6,20,0.9);border:1px solid #9a7520;padding:8px 18px;z-index:200;animation:fadeUp 0.4s ease-out;pointer-events:none';
-        toast.textContent='+'+d.credits_earned+' CREDITS';
-        document.body.appendChild(toast);
-        setTimeout(()=>{toast.style.opacity='0';toast.style.transition='opacity 0.5s'},2500);
-        setTimeout(()=>toast.remove(),3200);
-      }
-    })
     .catch(()=>{})
 }
 // End screen visual state helper
@@ -6136,7 +5617,7 @@ function renderEndBlob(isWin){
     // Priority: live applied appearance > store loadout > selected skin default.
     // This guarantees the end screen matches what the player was wearing in-game.
     const applied=player&&player._appliedAppearance;
-    const lo=_storeLoadout||{};
+    const lo={};
     const s=SKINS[selectedSkin]||{color:0xff8866,eyes:'X',head:'Horns'};
     const sc=applied?applied.skinColor:(lo.skinColor||s.color);
     const ey=applied?applied.eyeStyle:(lo.eyeStyle||s.eyes);
@@ -6177,7 +5658,7 @@ function setEndScreenState(isWin, banner, bannerColor, placementText, placementC
   renderEndBlob(isWin);
   // Victory animation
   if(isWin){
-    const customAnim=_storeLoadout&&_storeLoadout.victoryAnim;
+    const customAnim=null;
     setTimeout(()=>playVictoryAnim(customAnim||'confetti'),400);
   }
 }
@@ -6633,19 +6114,6 @@ function connectMultiplayer(){
 
       document.getElementById('end-score').textContent=me?me.score:score;
 
-      if(xUser){
-        let cr=10;
-        if(place===1)cr+=100;else if(place===2)cr+=50;else if(place===3)cr+=25;
-        cr+=Math.min(50,Math.floor((me?me.score:score)*0.1));
-        setTimeout(()=>{
-          const toast=document.createElement('div');
-          toast.style.cssText='position:fixed;bottom:80px;left:50%;transform:translateX(-50%);font-family:"Press Start 2P",monospace;font-size:10px;color:#ffd54f;background:rgba(10,6,20,0.9);border:1px solid #9a7520;padding:8px 18px;z-index:200;pointer-events:none';
-          toast.textContent='+'+cr+' CREDITS';
-          document.body.appendChild(toast);
-          setTimeout(()=>{toast.style.opacity='0';toast.style.transition='opacity 0.5s'},3000);
-          setTimeout(()=>toast.remove(),3800);
-        },1200);
-      }
     }else{
       setEndScreenState(false,'ROUND OVER','#8a80b0','','grey');
       document.getElementById('end-score').textContent=score;
