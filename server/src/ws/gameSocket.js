@@ -419,29 +419,40 @@ function endRound(io, lobby) {
   }))});
   console.log(`[MP] Round ended lobby ${lobby.id}. Winner: ${results[0]?.name} (${results[0]?.score})`);
 
-  saveResults(results, lobby.mapIndex).catch(e => console.error('[MP] Save error:', e.message));
+  saveResults(results, lobby).catch(e => console.error('[MP] Save error:', e.message));
   setTimeout(() => lobbies.delete(lobby.id), 30000);
 }
 
-async function saveResults(results, mapIndex) {
+async function saveResults(results, lobby) {
+  // One rounds row per match. seed is the lobby map seed for now; phase 1
+  // replaces it with the run seed. commit_hash, signature and tx_hash stay
+  // null until phases 2 and 3.
+  const round = await query(
+    `INSERT INTO rounds (mode, map_index, seed, status, max_players, duration_secs, start_time, end_time, winner)
+     VALUES ('multiplayer', $1, $2, 'completed', $3, $4, to_timestamp($5 / 1000.0), to_timestamp($6 / 1000.0), $7) RETURNING id`,
+    [lobby.mapIndex, lobby.mapSeed, MAX_PLAYERS, ROUND_DURATION, lobby.startTime, lobby.endTime, results[0]?.id ?? null]
+  );
+  const roundId = round.rows[0].id;
   for (const r of results) {
-    const safeName = sanitize(r.name, 12) || 'Unknown';
+    // r.id is the recovered address. Every seat written here is human;
+    // a bot seat would carry a bot id and is_bot true (see game/ids.js).
     await query(
-      `INSERT INTO leaderboard (player_name, score, minted, fragments, placement, map_index) VALUES ($1,$2,$3,$4,$5,$6)`,
-      [safeName, r.score, r.minted, r.fragments, r.placement, mapIndex]
+      `INSERT INTO round_results (round_id, participant, is_bot, score, minted, fragments, placement)
+       VALUES ($1, $2, false, $3, $4, $5, $6)`,
+      [roundId, r.id, r.score, r.minted, r.fragments, r.placement]
     );
     await query(
-      `INSERT INTO player_stats (player_name, total_score, total_wins, total_rounds, total_minted, best_score)
+      `INSERT INTO player_stats (address, total_score, total_wins, total_rounds, total_minted, best_score)
        VALUES ($1, $2, $3, 1, $4, $5)
-       ON CONFLICT (player_name) DO UPDATE SET
+       ON CONFLICT (address) DO UPDATE SET
          total_score = player_stats.total_score + $2,
          total_wins = player_stats.total_wins + $3,
          total_rounds = player_stats.total_rounds + 1,
          total_minted = player_stats.total_minted + $4,
          best_score = GREATEST(player_stats.best_score, $5),
          updated_at = NOW()`,
-      [safeName, r.score, r.placement === 1 ? 1 : 0, r.minted, r.score]
+      [r.id, r.score, r.placement === 1 ? 1 : 0, r.minted, r.score]
     );
   }
-  console.log(`[MP] Saved ${results.length} results to DB`);
+  console.log(`[MP] Saved round ${roundId} with ${results.length} results`);
 }
