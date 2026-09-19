@@ -9,6 +9,7 @@ Phase records:
 - [docs/phase2-bots.md](docs/phase2-bots.md): server side bots and powerups. Bot seats and driver, the shared collection and mint actions, the powerup authority model, the per seat speed cap.
 - [docs/phase2b-modes.md](docs/phase2b-modes.md): Quick Play and Arena. The free sandbox, the one staked mode, the stakeable flag, guest seats.
 - [docs/phase2c-death.md](docs/phase2c-death.md): death is one state change. The three faults behind stuck players, the ordering before and after.
+- [docs/phase2d-arena.md](docs/phase2d-arena.md): the Arena wait and the Arena map. Per mode lobby wait, and the recon that found online rounds had no map.
 
 ## Run it
 
