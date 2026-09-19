@@ -6047,6 +6047,10 @@ function connectMultiplayer(){
       if(colliders.length===0){switchMapInPlace(mapIdx);window._mapBuilt=true}
       // switchMapInPlace rebuilds the cabinet at the origin; take it down after the build, as startGame does
       if(arcadeCab){scene.remove(arcadeCab);arcadeCab=null}
+      // It also re-adds the local NPCs. Online classic plays the server's bots, which arrive on the
+      // tick; hide the NPCs now rather than letting eight of them stand through the countdown and
+      // vanish at GO!, as round:start does.
+      if(gameMode!=='lbs')for(const e of enemies){if(e.parent)scene.remove(e)}
       scene.rotation.y=0;
       document.getElementById('title-screen').style.display='none';
       document.getElementById('coin').style.display='none';
