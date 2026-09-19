@@ -6169,6 +6169,7 @@ function connectMultiplayer(){
   socket.on('disconnect',()=>{mpConnected=false;for(const [id,rp] of remotePlayers)scene.remove(rp.mesh);remotePlayers.clear();remoteExtras.clear()});
   // Receive boink from another player (with absorb data)
   socket.on('boink:hit',(d)=>{
+    if(!gameActive||lbsPlayerEliminated)return; // no hits before the round starts, none on the dead
     if(shadowActive){showFloat('PHASED!',0x8a5acc,player.position.clone());return}
     if(activeEffects.shield>0){showFloat('BLOCKED!',0x4a9ebb,player.position.clone());return}
     if(isJumping&&player.position.y>2){showFloat('DODGED!',0xffd54f,player.position.clone());return}

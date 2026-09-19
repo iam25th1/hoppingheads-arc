@@ -346,6 +346,10 @@ export function initGameSocket(io) {
     socket.on('boink', ({ target, myFrags }) => {
       if (!currentLobby || !playerId) return;
       if (!boinkLimiter()) return;
+      // No hits outside a live round. During the wait every seat sits at the
+      // origin, inside boink range of every other, and a hit landed there
+      // killed players before the round started.
+      if (currentLobby.status !== 'active') return;
 
       // Validate target exists
       if (typeof target !== 'string') return;
