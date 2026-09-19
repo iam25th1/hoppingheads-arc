@@ -20,7 +20,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 // Directories walked for .js / .mjs sources. Generated and vendored trees
 // are left out.
-const ROOTS = ['server/src', 'server/tests', 'scripts'];
+const ROOTS = ['server/src', 'server/tests', 'scripts', 'shared'];
 const SKIP_DIRS = new Set(['node_modules', '.git', '.lint-tmp', 'artifacts', 'cache', 'typechain-types']);
 
 function collect(dir, out) {
@@ -29,7 +29,7 @@ function collect(dir, out) {
     if (SKIP_DIRS.has(entry.name)) continue;
     const abs = path.join(dir, entry.name);
     if (entry.isDirectory()) collect(abs, out);
-    else if (/\.(js|mjs)$/.test(entry.name)) out.push(abs);
+    else if (/\.(js|mjs|cjs)$/.test(entry.name)) out.push(abs);
   }
   return out;
 }

@@ -54,6 +54,16 @@ app.get('/privacy', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'landing', 'privacy.html'));
 });
 
+// Shared modules: the same files the server requires, served as classic
+// scripts. Explicit content type because helmet sets nosniff and the files
+// are .cjs on disk.
+const SHARED_DIR = path.join(__dirname, "..", "..", "shared");
+for (const name of ["prng", "layout", "mapObstacles"]) {
+  app.get(`/game/lib/${name}.js`, (req, res) => {
+    res.type("application/javascript").sendFile(path.join(SHARED_DIR, `${name}.cjs`));
+  });
+}
+
 // Game client
 app.use("/game", express.static(path.join(__dirname, "..", "..", "client")));
 
