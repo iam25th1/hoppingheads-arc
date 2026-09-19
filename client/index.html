@@ -558,6 +558,10 @@ body.in-menu .mob-util-btn{display:none}
 
 <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<!-- Shared with the server: the same files it requires, served as classic scripts -->
+<script src="/game/lib/prng.js"></script>
+<script src="/game/lib/mapObstacles.js"></script>
+<script src="/game/lib/layout.js"></script>
 <script>
 const{Scene,PerspectiveCamera,WebGLRenderer,Color,FogExp2,AmbientLight,DirectionalLight,HemisphereLight,PointLight,
 BoxGeometry,SphereGeometry,CylinderGeometry,PlaneGeometry,ConeGeometry,DodecahedronGeometry,IcosahedronGeometry,OctahedronGeometry,TorusGeometry,CircleGeometry,
@@ -572,6 +576,9 @@ const R_HEX=[0x4a9ebb,0x5cc06a,0x8a5acc,0xdd5588,0xdda830],R_LBL=["COMMON","UNCO
 const SKIN_C=[0xff8866,0xaadd55,0xaa88dd,0x88bbcc,0xddcc55,0xff99bb,0x66ccaa],EYE_S=["X","Dots","Slit","Open"];
 function m32(s){s=s|0;return()=>{s=(s+0x6d2b79f5)|0;let t=Math.imul(s^(s>>>15),1|s);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296}}
 let rng=m32(0xf7a2c1de);
+// Decorations rebuild from this fixed stream on every map build, so the collider set of
+// a map is the same on every client and every rebuild. Gameplay draws keep their own stream.
+const MAP_DECOR_SEED=0xf7a2c1de;
 const _matCache=new Map();
 function cM(c){if(_matCache.has(c))return _matCache.get(c);const m=new MeshPhongMaterial({color:c,flatShading:true,shininess:8});_matCache.set(c,m);return m}
 // Shared blob materials
@@ -2167,7 +2174,7 @@ function switchMapInPlace(newIdx){
   stopAmbient();
   clearWorld();
   // Build new map
-  MAP_BUILDERS[mapIdx]();
+  {const gameplayRng=rng;rng=m32(MAP_DECOR_SEED);MAP_BUILDERS[mapIdx]();rng=gameplayRng}
   // Boundary colliders
   // Boundary ring removed - player movement uses MAP/2 hard clamp instead.
   // The ring was creating invisible walls inside the playable area.
@@ -2182,13 +2189,8 @@ function switchMapInPlace(newIdx){
     e._eliminated=false;e._health=MAX_HEALTH;
     scene.add(e);
   }
-  // Regenerate fragment positions
-  for(var fi=0;fi<fragments.length;fi++){
-    var f=fragments[fi];var pos=safePosInMap(0.38);
-    f.x=pos.x;f.z=pos.z;f.mesh.position.set(pos.x,0,pos.z);
-    f.collected=false;f.discovered=false;f.mesh.visible=false;
-    scene.add(f.mesh);
-  }
+  // Fragment positions from the shared layout (placeholder seed until round start issues one)
+  applyLayout(HHLayout.createLayout(SOLO_PLACEHOLDER_SEED,mapIdx));
   // Rebuild arcade cabinet
   if(arcadeCab){arcadeCab=null}
   arcadeCab=buildArcadeCab();arcadeCab.position.set(0,0,0);scene.add(arcadeCab);
@@ -2531,7 +2533,7 @@ const MAP_NAMES=["MEDIEVAL VILLAGE","DESERT OASIS","FROZEN TUNDRA","TROPICAL ISL
 const MAP_BUILDERS=[buildMedieval,buildDesert,buildFrozen,buildTropical,buildHaunted,buildCrystal];
 const _urlMap=new URLSearchParams(location.search).get('map');
 let mapIdx=_urlMap!==null?parseInt(_urlMap):Math.floor(Math.random()*6);
-MAP_BUILDERS[mapIdx]();
+{const gameplayRng=rng;rng=m32(MAP_DECOR_SEED);MAP_BUILDERS[mapIdx]();rng=gameplayRng}
 // Universal boundary ring - invisible colliders at map edge
 // Per-map playable radius (some maps have walls, this catches the rest)
 // Boundary ring was confining players to ~20% of the map. Push to near the true
@@ -2627,7 +2629,17 @@ function safePosInMap(range){
   return{x:(rng()-0.5)*MAP*0.2,z:(rng()-0.5)*MAP*0.2};
 }
 const fragments=[];const FRAG_N=[30,18,12,7,4];
-for(let r=0;r<5;r++){for(let i=0;i<FRAG_N[r];i++){const fg=new Group();const color=R_HEX[r];const fm=new MeshPhongMaterial({color,emissive:color,emissiveIntensity:0.35,flatShading:true,transparent:true,opacity:0.85});fg.add(new Mesh(new ConeGeometry(0.35,0.55,4),fm));fg.children[0].position.y=0.55;const bot=new Mesh(new ConeGeometry(0.35,0.35,4),fm);bot.rotation.x=Math.PI;bot.position.y=0.15;fg.add(bot);const pos=safePosInMap(0.38);fg.position.set(pos.x,0,pos.z);fg.visible=false;scene.add(fg);fragments.push({mesh:fg,rarity:r,x:pos.x,z:pos.z,collected:false,discovered:false})}}
+for(let r=0;r<5;r++){for(let i=0;i<FRAG_N[r];i++){const fg=new Group();const color=R_HEX[r];const fm=new MeshPhongMaterial({color,emissive:color,emissiveIntensity:0.35,flatShading:true,transparent:true,opacity:0.85});fg.add(new Mesh(new ConeGeometry(0.35,0.55,4),fm));fg.children[0].position.y=0.55;const bot=new Mesh(new ConeGeometry(0.35,0.35,4),fm);bot.rotation.x=Math.PI;bot.position.y=0.15;fg.add(bot);fg.position.set(0,0,0);fg.visible=false;scene.add(fg);fragments.push({mesh:fg,rarity:r,x:0,z:0,collected:false,discovered:false})}}
+// Fragment positions come from the shared layout module (shared/layout.cjs, served at
+// /game/lib/layout.js), never from safePosInMap. The server computes the same layout from
+// the same file, so both sides agree byte for byte. fragments[i] is layout fragment id i:
+// both are built rarity-major over FRAG_N.
+let currentLayout=null;
+// Stands in for the server issued seed until the next commit wires round start.
+const SOLO_PLACEHOLDER_SEED="0x"+"f7a2c1de".repeat(8);
+function placeFragment(f,lf){f.x=lf.x;f.z=lf.z;f.mesh.position.set(lf.x,0,lf.z);f.collected=false;f.discovered=false;f.mesh.visible=false;if(!f.mesh.parent)scene.add(f.mesh)}
+function applyLayout(layout){currentLayout=layout;for(const lf of layout.fragments){const f=fragments[lf.id];if(f)placeFragment(f,lf)}}
+function applyRespawn(moved){for(const lf of moved){const f=fragments[lf.id];if(f)placeFragment(f,lf)}}
 const unlockedNFTs=[];
 function spawnNFT(rarity){
   const color=R_HEX[rarity];
@@ -5534,7 +5546,8 @@ scene.remove(n.mesh);isMinting=false;currentMintNFT=null;document.getElementById
 healPlayer(HEALTH_REGEN_PER_HEAD);showFloat(`+${HEALTH_REGEN_PER_HEAD} HP!`,0x5cc06a,player.position.clone());
 // Respawn fragments of this rarity so player can recollect
 fragCounts[n.rarity]=0;
-for(const f of fragments){if(f.rarity===n.rarity){f.collected=false;f.discovered=false;f.mesh.visible=false;const pos=safePosInMap(0.38);f.x=pos.x;f.z=pos.z;f.mesh.position.set(pos.x,0,pos.z);if(!f.mesh.parent)scene.add(f.mesh)}}
+// Respawn positions come from the layout stream, the same one the server holds.
+if(currentLayout)applyRespawn(currentLayout.respawn(n.rarity));
 showFloat('FRAGMENTS RESPAWNED!',R_HEX[n.rarity],player.position.clone());
 updateHud();if(socket&&mpConnected)socket.emit('mint:done',{rarity:n.rarity,score});}
 function useRadar(){

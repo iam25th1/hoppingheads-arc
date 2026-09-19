@@ -106,6 +106,7 @@ const threeGlobals = {
   SpriteMaterial: 'readonly', Sprite: 'readonly',
   MathUtils: 'readonly', CatmullRomCurve3: 'readonly', TubeGeometry: 'readonly',
   io: 'readonly', Chart: 'readonly',
+  HHPrng: 'readonly', HHMapObstacles: 'readonly', HHLayout: 'readonly',
 };
 
 // -------- Run ESLint via Node.js API -----------------------------------
@@ -135,7 +136,7 @@ totalErrors += await runEslint({
     },
     rules: bugRules,
   },
-  files: ['server/src/**/*.js'],
+  files: ['server/src/**/*.js', 'shared/**/*.cjs'],
 });
 
 // Extracted HTML inline scripts (browser, script mode)

@@ -13,11 +13,13 @@ import { promisify } from 'node:util';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { createRng, seedFrom } from '../src/game/prng.js';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const { createRng, seedFrom, createRngFromHex, isHexSeed } = require('../../shared/prng.cjs');
 
 const execFileAsync = promisify(execFile);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const PRNG_PATH = path.join(HERE, '..', 'src', 'game', 'prng.js');
+const PRNG_PATH = path.join(HERE, '..', '..', 'shared', 'prng.cjs');
 
 /** Draw n uint32 values from a fresh generator. */
 function draw(seed, n = 64) {
@@ -105,7 +107,8 @@ test('sequence is identical in a separate process', async () => {
   // from something process wide and stable within one run. Actually starting
   // a second node process is what rules that out.
   const script = `
-    import { createRng } from ${JSON.stringify(PRNG_PATH)};
+    import { createRequire } from 'node:module';
+    const { createRng } = createRequire(import.meta.url)(${JSON.stringify(PRNG_PATH)});
     const rng = createRng('arc-arena-p1');
     process.stdout.write(JSON.stringify(Array.from({ length: 8 }, () => rng.nextUint32())));
   `;
@@ -156,4 +159,36 @@ test('seedFrom rejects seeds it cannot represent', () => {
   assert.throws(() => seedFrom(null), TypeError);
   assert.throws(() => seedFrom(undefined), TypeError);
   assert.throws(() => seedFrom({}), TypeError);
+});
+
+// -- Full width hex seeds -----------------------------------------
+
+const HEX_A = '0x' + 'ab'.repeat(32);
+
+test('createRngFromHex: same seed, same sequence; golden vector', () => {
+  const draw = (h, n = 8) => { const r = createRngFromHex(h); return Array.from({ length: n }, () => r.nextUint32()); };
+  assert.deepEqual(draw(HEX_A), draw(HEX_A));
+  assert.ok(isHexSeed(HEX_A));
+  assert.equal(isHexSeed('0x' + 'ab'.repeat(31)), false);
+  assert.equal(isHexSeed('ab'.repeat(32)), false);
+  assert.throws(() => createRngFromHex('0xdead'), TypeError);
+});
+
+test('createRngFromHex: every hex digit of the 256 bits reaches the state', () => {
+  // Flip one nibble at a time across the whole seed; each must change the
+  // opening draws. A seed reduced to 32 bits would leave 56 of these flips
+  // with no effect. Eight draws, because the first xoshiro output depends on
+  // one state word only and the others mix in over the next steps.
+  const draw = (h) => { const r = createRngFromHex(h); return Array.from({ length: 8 }, () => r.nextUint32()).join(','); };
+  const base = draw(HEX_A);
+  for (let i = 2; i < 66; i++) {
+    const flipped = HEX_A.slice(0, i) + (HEX_A[i] === 'a' ? 'b' : 'a') + HEX_A.slice(i + 1);
+    assert.notEqual(draw(flipped), base, 'flip at hex digit ' + (i - 2) + ' had no effect');
+  }
+});
+
+test('createRngFromHex: the all zero seed does not stick', () => {
+  const r = createRngFromHex('0x' + '0'.repeat(64));
+  const values = new Set(Array.from({ length: 64 }, () => r.nextUint32()));
+  assert.ok(values.size > 60);
 });
