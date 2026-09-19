@@ -3254,7 +3254,7 @@ function triggerPlayerDeath(){
 }
 
 function takeDamage(amount){
-  if(health<=0||lbsPlayerEliminated)return;
+  if(!gameActive||health<=0||lbsPlayerEliminated)return; // no damage outside a live round, from any source
   lastDamageTime=clock.elapsedTime;
   if(isMinting){
     isMinting=false;mintProgress=0;currentMintNFT=null;
@@ -6041,11 +6041,12 @@ function connectMultiplayer(){
     if(gamePhase==='title'){
       gamePhase='countdown';
       document.getElementById('title-screen').style.display='none';
-      if(arcadeCab){scene.remove(arcadeCab);arcadeCab=null}
       // The menu is an arcade only scene with no map. An online round has to build the map
       // it is about to play, the way startGame does for solo. colliders is empty exactly when
       // no map is built; every map has at least 55.
       if(colliders.length===0){switchMapInPlace(mapIdx);window._mapBuilt=true}
+      // switchMapInPlace rebuilds the cabinet at the origin; take it down after the build, as startGame does
+      if(arcadeCab){scene.remove(arcadeCab);arcadeCab=null}
       scene.rotation.y=0;
       document.getElementById('title-screen').style.display='none';
       document.getElementById('coin').style.display='none';
@@ -6071,6 +6072,9 @@ function connectMultiplayer(){
     if(d.seed&&typeof d.mapIndex==='number'){applyLayout(HHLayout.createLayout(d.seed,d.mapIndex))}
     // A fresh seat, whatever happened in the lobby: alive, visible, in control, not spectating.
     lbsPlayerEliminated=false;lbsSpectating=false;lbsSpecTarget=null;player.visible=true;boinkKnockback=null;
+    // The server issued a spawn for every seat; stand on mine. Before this every seat, human
+    // and bot, started at the origin.
+    if(d.spawns&&d.spawns[myPlayerId]){player.position.set(d.spawns[myPlayerId].x,0,d.spawns[myPlayerId].z)}
     // Online LBS: the same round setup solo gets from startGame
     if(gameMode==='lbs')setupLbsRound();
     document.getElementById('cd-text').textContent='GO!';
