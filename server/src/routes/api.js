@@ -3,6 +3,7 @@ import { query } from "../db/pool.js";
 import { verifySessionToken, shortAddress } from "../utils/walletAuth.js";
 import { isHumanId } from "../game/ids.js";
 import { issueRound } from "../game/rounds.js";
+import { registerSoloRound, respawnSoloRound } from "../game/soloRounds.js";
 
 const SOLO_MODES = new Set(["classic-solo", "lbs-solo"]);
 
@@ -60,11 +61,25 @@ router.post("/round/start", async (req, res) => {
   const address = verifySessionToken(req.get("x-session") || req.body?.session);
   try {
     const round = await issueRound({ mode, mapIndex: req.body?.mapIndex, issuedTo: address, persist: !!address });
-    res.json(round);
+    // The server keeps this round's layout stream; the client never places a
+    // fragment itself. The key is what the client presents to advance it.
+    const key = registerSoloRound(round);
+    res.json({ ...round, key });
   } catch (err) {
+    if (err.message === "solo_rounds_full") return res.status(429).json({ error: "Too many open rounds, try again shortly" });
     console.error("[API] Round start error:", err.message);
     res.status(500).json({ error: "Failed to start round" });
   }
+});
+
+// POST /api/round/respawn { key, rarity } -> { rarity, fragments: [{id, rarity, x, z}] }
+// A solo mint respawns that rarity. The positions come from the server's
+// copy of the round's layout stream, the same call a lobby makes before it
+// broadcasts frag:respawn.
+router.post("/round/respawn", (req, res) => {
+  const moved = respawnSoloRound(req.body?.key, req.body?.rarity);
+  if (!moved) return res.status(404).json({ error: "Unknown round or rarity" });
+  res.json({ rarity: req.body.rarity, fragments: moved });
 });
 
 // ---------------------------------------------------------------
