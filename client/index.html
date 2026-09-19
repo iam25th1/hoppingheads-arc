@@ -3227,16 +3227,28 @@ function triggerPlayerDeath(){
     // If only 1 left, endRound is already scheduled by lbsDecAlive
     return;
   }
-  // Classic/multiplayer: respawn after delay with full health
-  player.visible=true;
-  lbsPlayerEliminated=false;
-  setTimeout(()=>{
-    if(!gameActive)return;
+  // Classic / arena: stay dead. Hidden and uncontrollable from the burst until the
+  // respawn actually lands, with the wait shown on screen. Nothing about the character
+  // is live in between, and other clients get one last update so they stop hopping it.
+  boinkKnockback=null;isJumping=false;jumpTimer=0;player.position.y=0;player._isHopping=false;
+  if(socket&&mpConnected){lastPosSend=0;sendPosition()}
+  const cdEl=document.getElementById('countdown'),cdText=document.getElementById('cd-text');
+  let respawnLeft=3;
+  const showRespawn=()=>{cdText.textContent='RESPAWN IN '+respawnLeft;cdText.style.color='#ff6b6b';cdEl.style.display='flex'};
+  showRespawn();
+  const respawnTick=setInterval(()=>{
+    respawnLeft--;
+    if(!gameActive||!lbsPlayerEliminated){clearInterval(respawnTick);cdEl.style.display='none';return}
+    if(respawnLeft>0){showRespawn();return}
+    clearInterval(respawnTick);cdEl.style.display='none';
+    // The respawn lands: full health, a new spot, visible and controllable in the same frame
     health=MAX_HEALTH;updateHealthHUD();
     player.position.set((Math.random()-0.5)*20,0,(Math.random()-0.5)*20);
+    player.visible=true;lbsPlayerEliminated=false;
+    if(socket&&mpConnected){lastPosSend=0;sendPosition()}
     showFloat('RESPAWNED',0x5cc06a,player.position.clone());
     playTone(440,0.15,'sine',0.08);playTone(660,0.1,'sine',0.06,0.08);
-  },3000);
+  },1000);
 }
 
 function takeDamage(amount){
