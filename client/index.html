@@ -3207,8 +3207,12 @@ function triggerPlayerDeath(){
   playTone(80,0.5,'sawtooth',0.15);playTone(60,0.4,'sawtooth',0.1,0.2);playTone(40,0.5,'sawtooth',0.08,0.4);
   // 5. Hide player immediately
   player.visible=false;
-  // Mark eliminated
+  // Mark eliminated, and nothing about the character stays live: no knockback, no jump, no
+  // hop, and one last position update online with moving false so other clients stop
+  // hop animating the corpse.
   lbsPlayerEliminated=true;
+  boinkKnockback=null;isJumping=false;jumpTimer=0;player.position.y=0;player._isHopping=false;
+  if(socket&&mpConnected){lastPosSend=0;sendPosition()}
 
   // LHS MODE: enter spectator
   if(gameMode==='lbs'){
@@ -3229,9 +3233,7 @@ function triggerPlayerDeath(){
   }
   // Classic / arena: stay dead. Hidden and uncontrollable from the burst until the
   // respawn actually lands, with the wait shown on screen. Nothing about the character
-  // is live in between, and other clients get one last update so they stop hopping it.
-  boinkKnockback=null;isJumping=false;jumpTimer=0;player.position.y=0;player._isHopping=false;
-  if(socket&&mpConnected){lastPosSend=0;sendPosition()}
+  // is live in between.
   const cdEl=document.getElementById('countdown'),cdText=document.getElementById('cd-text');
   let respawnLeft=3;
   const showRespawn=()=>{cdText.textContent='RESPAWN IN '+respawnLeft;cdText.style.color='#ff6b6b';cdEl.style.display='flex'};
@@ -5429,6 +5431,36 @@ async function fetchLeaderboard(){
   }catch(e){el.textContent='OFFLINE'}
 }
 
+// Last Head Hopping round setup: hide fragments, apply the difficulty to the local NPCs,
+// count the seats. Solo calls this from startGame; online calls it from round:start, which
+// never ran it before, so an online LBS death counted against an alive count of zero and
+// ended the round locally 1.5s later while the server round carried on.
+function setupLbsRound(){
+  for(const f of fragments){f.collected=true;f.discovered=false;f.mesh.visible=false;if(f.mesh.parent)scene.remove(f.mesh)}
+  roundTime=9999;
+  // Difficulty adjustments
+  const diffCfg={easy:{count:4,aggro:0.008,npcAggro:0.002,hp:80},normal:{count:8,aggro:0.015,npcAggro:0.003,hp:100},hard:{count:12,aggro:0.025,npcAggro:0.005,hp:120}};
+  const cfg=diffCfg[lbsDifficulty]||diffCfg.normal;
+  window._lbsAggro=cfg.aggro;window._lbsNpcAggro=cfg.npcAggro;
+  // Spawn extra NPCs for hard, remove some for easy
+  const extraSkins=[{skin:0xcc6688,eyes:'Laser',hw:'Mohawk'},{skin:0x55aa88,eyes:'Diamond',hw:'Halo'},{skin:0xbb8844,eyes:'VoidEye',hw:'Visor'},{skin:0x7799cc,eyes:'Hypno',hw:'Wings'}];
+  if(cfg.count>enemies.length){
+    for(let ei=0;ei<cfg.count-8;ei++){
+      const es=extraSkins[ei%extraSkins.length];
+      const e=mkBlob(es.skin,es.eyes,es.hw,false);
+      e.position.set((rng()-0.5)*60,0,(rng()-0.5)*60);
+      e._tx=e.position.x;e._tz=e.position.z;e._wt=0;e._lastX=e.position.x;e._lastZ=e.position.z;e._stuckTimer=0;e._seekingFrag=false;e._targetFragIdx=-1;e._giveUpId=-1;e._giveUpCD=0;e._fragCount=0;e._targetScale=1.0;e._boinkCD=0;e._kb=null;
+      scene.add(e);enemies.push(e);
+    }
+  }
+  // Set HP and aggro for all NPCs
+  for(let ei=0;ei<enemies.length;ei++){
+    if(ei<cfg.count){enemies[ei]._health=cfg.hp;enemies[ei]._eliminated=false;enemies[ei]._lbsAggro=true;if(!enemies[ei].parent)scene.add(enemies[ei])}
+    else{enemies[ei]._eliminated=true;if(enemies[ei].parent)scene.remove(enemies[ei])}
+  }
+  document.getElementById('map-name-hud').textContent='LAST HEAD HOPPING';
+  lbsAliveCount=Math.min(cfg.count,enemies.filter(e=>!e._eliminated).length)+1;
+}
 function startGame(){
   
   if(gamePhase!=='title')return;
@@ -5451,30 +5483,7 @@ function startGame(){
   if(soloRound){if(soloRound.mapIndex!==mapIdx)switchMapInPlace(soloRound.mapIndex);applyLayout(HHLayout.createLayout(soloRound.seed,soloRound.mapIndex));currentRoundId=soloRound.id;currentRoundKey=soloRound.key||null;soloRound=null}
   // LBS mode: hide all fragments, they don't exist in this mode
   if(gameMode==='lbs'){
-    for(const f of fragments){f.collected=true;f.discovered=false;f.mesh.visible=false;if(f.mesh.parent)scene.remove(f.mesh)}
-    roundTime=9999;
-    // Difficulty adjustments
-    const diffCfg={easy:{count:4,aggro:0.008,npcAggro:0.002,hp:80},normal:{count:8,aggro:0.015,npcAggro:0.003,hp:100},hard:{count:12,aggro:0.025,npcAggro:0.005,hp:120}};
-    const cfg=diffCfg[lbsDifficulty]||diffCfg.normal;
-    window._lbsAggro=cfg.aggro;window._lbsNpcAggro=cfg.npcAggro;
-    // Spawn extra NPCs for hard, remove some for easy
-    const extraSkins=[{skin:0xcc6688,eyes:'Laser',hw:'Mohawk'},{skin:0x55aa88,eyes:'Diamond',hw:'Halo'},{skin:0xbb8844,eyes:'VoidEye',hw:'Visor'},{skin:0x7799cc,eyes:'Hypno',hw:'Wings'}];
-    if(cfg.count>enemies.length){
-      for(let ei=0;ei<cfg.count-8;ei++){
-        const es=extraSkins[ei%extraSkins.length];
-        const e=mkBlob(es.skin,es.eyes,es.hw,false);
-        e.position.set((rng()-0.5)*60,0,(rng()-0.5)*60);
-        e._tx=e.position.x;e._tz=e.position.z;e._wt=0;e._lastX=e.position.x;e._lastZ=e.position.z;e._stuckTimer=0;e._seekingFrag=false;e._targetFragIdx=-1;e._giveUpId=-1;e._giveUpCD=0;e._fragCount=0;e._targetScale=1.0;e._boinkCD=0;e._kb=null;
-        scene.add(e);enemies.push(e);
-      }
-    }
-    // Set HP and aggro for all NPCs
-    for(let ei=0;ei<enemies.length;ei++){
-      if(ei<cfg.count){enemies[ei]._health=cfg.hp;enemies[ei]._eliminated=false;enemies[ei]._lbsAggro=true;if(!enemies[ei].parent)scene.add(enemies[ei])}
-      else{enemies[ei]._eliminated=true;if(enemies[ei].parent)scene.remove(enemies[ei])}
-    }
-    document.getElementById('map-name-hud').textContent='LAST HEAD HOPPING';
-    lbsAliveCount=Math.min(cfg.count,enemies.filter(e=>!e._eliminated).length)+1;
+    setupLbsRound();
   }else{
     // Reset fragments for new round
     for(const f of fragments){f.collected=false;f.discovered=false;f.mesh.visible=false;if(!f.mesh.parent)scene.add(f.mesh)}
@@ -6056,6 +6065,10 @@ function connectMultiplayer(){
     if(gameMode!=='lbs')for(const e of enemies){if(e.parent)scene.remove(e)}
     // The server issued seed and map. Build the layout from them through the shared module.
     if(d.seed&&typeof d.mapIndex==='number'){applyLayout(HHLayout.createLayout(d.seed,d.mapIndex))}
+    // A fresh seat, whatever happened in the lobby: alive, visible, in control, not spectating.
+    lbsPlayerEliminated=false;lbsSpectating=false;lbsSpecTarget=null;player.visible=true;boinkKnockback=null;
+    // Online LBS: the same round setup solo gets from startGame
+    if(gameMode==='lbs')setupLbsRound();
     document.getElementById('cd-text').textContent='GO!';
     document.getElementById('cd-text').style.color='#5cc06a';
     const el=document.getElementById('cd-text');el.style.animation='none';el.offsetHeight;el.style.animation='cdPop 0.6s ease-out';
