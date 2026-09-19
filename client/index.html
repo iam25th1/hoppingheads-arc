@@ -5567,7 +5567,7 @@ fragCounts[n.rarity]=0;
 // Respawn positions come from the layout stream, the same one the server holds.
 if(currentLayout&&!(socket&&mpConnected))applyRespawn(currentLayout.respawn(n.rarity)); // online: the server broadcasts frag:respawn
 showFloat('FRAGMENTS RESPAWNED!',R_HEX[n.rarity],player.position.clone());
-updateHud();if(socket&&mpConnected)socket.emit('mint:done',{rarity:n.rarity,score});}
+updateHud();if(socket&&mpConnected)socket.emit('mint:done',{});}
 function useRadar(){
   if(radarPings<=0||lbsPlayerEliminated)return;
   radarPings--;sfxRadar();scanPulseTimer=5;scanPulseActive=true;
@@ -6080,6 +6080,9 @@ function connectMultiplayer(){
   socket.on('frag:taken',(d)=>{const f=fragments[d.id];if(!f||f.collected)return;f.collected=true;if(f.mesh.parent)scene.remove(f.mesh)});
   socket.on('frag:rejected',(d)=>{const f=fragments[d.id];if(!f)return;if(f.collected){f.collected=false;fragCounts[f.rarity]=Math.max(0,fragCounts[f.rarity]-1);score=Math.max(0,score-3);totalFragCount=getTotalFrags();f.mesh.visible=true;if(!f.mesh.parent)scene.add(f.mesh);updateHud()}showFloat('NOT COUNTED',0x6a6490,new Vector3(f.x,3,f.z))});
   socket.on('frag:respawn',(d)=>{applyRespawn(d.fragments)});
+  // The server refused a mint (no chest on record, too early, or over the cap). The local
+  // mint already played out; the score that counts is the server's at round end.
+  socket.on('mint:rejected',(d)=>{showFloat('MINT NOT COUNTED',0x6a6490,player.position.clone());console.warn('[MP] mint rejected:',d.reason)});
   socket.on('mint:broadcast',(d)=>{
     const rp=remotePlayers.get(d.id);
     if(rp&&rp.mesh._skinMat){rp.mesh._skinMat.emissive.setHex(0xffd54f);rp.mesh._skinMat.emissiveIntensity=0.3;setTimeout(()=>{rp.mesh._skinMat.emissive.setHex(0);rp.mesh._skinMat.emissiveIntensity=0},500)}

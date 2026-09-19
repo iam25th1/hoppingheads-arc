@@ -81,3 +81,54 @@ export function unclaimedByRarity(state) {
   for (const f of state.frags.values()) if (f.claimedBy === null) counts[f.rarity]++;
   return counts;
 }
+
+// -- Mints -------------------------------------------------------
+//
+// A chest appears when a player has collected three fragments of one
+// rarity since that rarity's last chest, exactly as the client spawns one.
+// The server records those chests itself, so a mint claim carries nothing:
+// the rarity comes from the record, never from the payload.
+
+export const MINT_LIMIT = 5; // per player per round; matches the client cap and collection.js
+export const MINT_POINTS = [10, 25, 50, 100, 250];
+export const MINT_DURATIONS = [2500, 3500, 4500, 6000, 8000]; // ms, the client's MINT_DUR
+export const MINT_GRACE_MS = 500; // for the client's own timer running a hair fast
+export const FRAGS_PER_CHEST = 3;
+
+/** Fields the mint rules keep on a player record. */
+export function createMintState() {
+  return { chests: [], fragsSinceChest: [0, 0, 0, 0, 0], minted: 0 };
+}
+
+/**
+ * Record a validated collection. Returns the rarity of a chest it spawned,
+ * or null. Call this after tryCollect succeeds.
+ */
+export function noteCollect(mint, rarity, now) {
+  mint.fragsSinceChest[rarity]++;
+  if (mint.fragsSinceChest[rarity] < FRAGS_PER_CHEST) return null;
+  mint.fragsSinceChest[rarity] = 0;
+  mint.chests.push({ rarity, since: now });
+  return rarity;
+}
+
+/**
+ * Try to complete a mint. The chest consumed is the highest rarity pending;
+ * the player's real collections bound what that can be. The chest must be
+ * at least its rarity's mint duration old, less grace, or the client is
+ * claiming a mint it could not have finished.
+ */
+export function tryMint(mint, now, rejections) {
+  if (mint.minted >= MINT_LIMIT) return reject(rejections, "mint_cap");
+  if (mint.chests.length === 0) return reject(rejections, "mint_no_chest");
+  let idx = 0;
+  for (let i = 1; i < mint.chests.length; i++) if (mint.chests[i].rarity > mint.chests[idx].rarity) idx = i;
+  const chest = mint.chests[idx];
+  const elapsed = now - chest.since;
+  if (elapsed + MINT_GRACE_MS < MINT_DURATIONS[chest.rarity]) {
+    return reject(rejections, "mint_early", { rarity: chest.rarity, elapsed });
+  }
+  mint.chests.splice(idx, 1);
+  mint.minted++;
+  return { ok: true, rarity: chest.rarity, points: MINT_POINTS[chest.rarity], minted: mint.minted };
+}
