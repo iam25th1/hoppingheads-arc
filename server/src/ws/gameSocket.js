@@ -162,6 +162,7 @@ export function initGameSocket(io) {
         maxMints:MINT_LIMIT, boinkCd:0,
         mint: createMintState(), // chests earned from validated collections; the only mint record
         rejections: createRejections(), // per reason tally of refused claims, logged at round end
+        violations: { move: 0 }, // movement clamps, same idea: clamp for latency, count for phase 5
       });
 
       currentLobby = lobby;
@@ -241,7 +242,14 @@ export function initGameSocket(io) {
       const maxDist = adjustedMaxSpeed * elapsed + 2; // +2 margin for knockback
 
       if (dist > maxDist && p.lastPosTime > 0) {
-        // Suspicious movement, clamp
+        // Suspicious movement. Still clamp, so a latency spike does not eject
+        // an honest player, but count it and log it: a slow continuous
+        // cheater must not be invisible. No ejection yet. Logged on the first
+        // three and every fiftieth after, so a real cheat cannot flood the log.
+        p.violations.move++;
+        if (p.violations.move <= 3 || p.violations.move % 50 === 0) {
+          console.warn(`[MP] FLAG pos ${playerId} moved ${dist.toFixed(1)} max ${maxDist.toFixed(1)} in ${Math.round(elapsed * 1000)}ms (count ${p.violations.move})`);
+        }
         const ratio = maxDist / dist;
         p.x = p.lastX + dx * ratio;
         p.z = p.lastZ + dz * ratio;
@@ -466,10 +474,12 @@ function endRound(io, lobby) {
     .sort((a, b) => b.score - a.score)
     .map((r, i) => ({ ...r, placement:i+1 }));
 
-  // Refused claims per player. Zero for honest clients; anything else is
-  // the trail phase 5 reads.
+  // Refused claims and movement flags per player. Zero for honest clients;
+  // anything else is the trail phase 5 reads.
   for (const p of lobby.players.values()) {
-    if (p.rejections.total > 0) console.warn(`[MP] Rejections lobby ${lobby.id} ${p.id}: ${JSON.stringify(p.rejections)}`);
+    if (p.rejections.total > 0 || p.violations.move > 0) {
+      console.warn(`[MP] Flags lobby ${lobby.id} ${p.id}: rejections=${JSON.stringify(p.rejections)} moveClamps=${p.violations.move}`);
+    }
   }
 
   // Emit the public result fields only
