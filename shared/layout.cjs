@@ -96,14 +96,16 @@
 
   /**
    * A stream of safe positions on a map, for things placed during a round
-   * that are not fragments (powerups). Seeded from the round seed with its
-   * last byte replaced by 0xff so it never overlaps a fragment or bot stream.
+   * that are not fragments (powerups, spawns). Seeded from the round seed
+   * with its last byte replaced by tag, so it never overlaps a fragment or
+   * bot stream: "ff" (the default) for powerups, "fe" for spawns.
    * range is the placement band, 0.35 for powerups as the client used.
    */
-  function createPositionStream(seed, mapIndex, range) {
+  function createPositionStream(seed, mapIndex, range, tag) {
     if (!prng.isHexSeed(seed)) throw new TypeError("createPositionStream: seed must be 0x followed by 64 hex digits");
     if (!Number.isInteger(mapIndex) || mapIndex < 0 || mapIndex >= MAP_COUNT) throw new RangeError("createPositionStream: bad mapIndex");
-    const rng = prng.createRngFromHex(seed.slice(0, 64) + "ff");
+    if (tag !== undefined && !/^[0-9a-f]{2}$/.test(tag)) throw new RangeError("createPositionStream: tag must be two hex digits");
+    const rng = prng.createRngFromHex(seed.slice(0, 64) + (tag || "ff"));
     const colliders = mapObstacles[mapIndex];
     const band = typeof range === "number" ? range : PLACE_RANGE;
     return {

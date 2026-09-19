@@ -13,6 +13,7 @@ import { lobbyModeFor, rulesFor } from "../game/modes.js";
 import { grantKnockback, judgeMove, BASE_SPEED, BOOST_SPEED } from "../game/movement.js";
 import { createSeat, fillWithBots, countSeats, BOT_FILL_TO, DEFAULT_SKINS } from "../game/bots.js";
 import { createBotBrain, stepBot, BOT_SPEED } from "../game/botDriver.js";
+import { createSpawns } from "../game/spawns.js";
 import { createPowerupState, spawnIfDue, expire, pickups, hasEffect } from "../game/powerups.js";
 import { isBotId, isHumanId, guestId } from "../game/ids.js";
 
@@ -153,6 +154,7 @@ function botSlot(id) {
  * mint through the same validated actions a human's socket events call.
  */
 function driveBots(io, lobby, now) {
+  if (lobby.status !== 'active') return; // bots act in a live round only, whatever calls this
   const dt = lobby.lastTickAt ? (now - lobby.lastTickAt) / 1000 : 0.1;
   lobby.lastTickAt = now;
   if (!lobby.frags) return;
@@ -460,6 +462,18 @@ async function startRound(io, lobby) {
   lobby.lastTickAt = null;
   // Powerups: schedule, type and position off the seed; pickups by proximity on the tick
   lobby.powerups = lobby.rules.powerups ? createPowerupState(lobby.seed, lobby.mapIndex, Date.now()) : null; // now, not lobby.startTime, which is set further down
+  // Every seat starts at its own spawn, off the seed (spawns.js). Before this
+  // every seat, human and bot, started at the origin, which is itself an
+  // obstacle on five of the six maps. The client places its player from the
+  // spawns in round:start; a bot moves from its spawn on the first tick.
+  const spawns = createSpawns(lobby.seed, lobby.mapIndex, lobby.players.size);
+  const spawnById = {};
+  let seat = 0;
+  for (const p of lobby.players.values()) {
+    const at = spawns[seat++];
+    p.x = at.x; p.z = at.z; p.move.x = at.x; p.move.z = at.z;
+    spawnById[p.id] = at;
+  }
 
   lobby.status = 'active';
   lobby.startTime = Date.now();
@@ -468,6 +482,7 @@ async function startRound(io, lobby) {
   io.to(`lobby:${lobby.id}`).emit('round:start', {
     duration:ROUND_DURATION, endTime:lobby.endTime,
     seed:lobby.seed, mapIndex:lobby.mapIndex, mode:lobby.mode,
+    spawns:spawnById,
   });
 
   console.log(`[MP] Round started lobby ${lobby.id} mode=${lobby.mode} (${lobby.players.size} players)`);
