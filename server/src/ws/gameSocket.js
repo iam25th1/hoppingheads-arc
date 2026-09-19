@@ -13,6 +13,7 @@ import { lobbyModeFor, rulesFor } from "../game/modes.js";
 import { grantKnockback, judgeMove, MAX_SPEED } from "../game/movement.js";
 import { createSeat, fillWithBots, countSeats, BOT_FILL_TO, DEFAULT_SKINS } from "../game/bots.js";
 import { createBotBrain, stepBot, BOT_SPEED } from "../game/botDriver.js";
+import { createPowerupState, spawnIfDue, expire, pickups, hasEffect } from "../game/powerups.js";
 import { isBotId } from "../game/ids.js";
 
 const require = createRequire(import.meta.url);
@@ -122,6 +123,19 @@ function lobbyEmit(io, lobby) {
   };
 }
 
+/**
+ * Powerups on the tick: spawn when due, expire, and award pickups by the
+ * server's own tracked positions, bots included. No claim event exists.
+ */
+function tickPowerups(io, lobby, now) {
+  const st = lobby.powerups;
+  if (!st) return;
+  const pw = spawnIfDue(st, now);
+  if (pw) io.to(`lobby:${lobby.id}`).emit('pw:spawn', { id: pw.id, type: pw.type, x: pw.x, z: pw.z });
+  for (const id of expire(st, now)) io.to(`lobby:${lobby.id}`).emit('pw:expire', { id });
+  for (const t of pickups(st, [...lobby.players.values()], now)) io.to(`lobby:${lobby.id}`).emit('pw:taken', t);
+}
+
 /** Slot n of a bot id, for its stream. */
 function botSlot(id) {
   return Number(id.split(":")[2]);
@@ -143,7 +157,9 @@ function driveBots(io, lobby, now) {
   const emit = lobbyEmit(io, lobby);
   for (const p of lobby.players.values()) {
     if (!p.isBot || !p.brain) continue;
-    const r = stepBot(p.brain, p, world, BOT_SPEED, dt);
+    // A bot the server knows is boosted runs at the boosted speed, like a human would
+    const speed = hasEffect(p, 'speed', now) ? BOT_SPEED * 2 : BOT_SPEED;
+    const r = stepBot(p.brain, p, world, speed, dt);
     applyMove(p, r.nx, r.nz, r.ry, r.moving, now);
     // Same path as frag:collected. The judge may have clamped the bot short
     // of where the driver wanted it; then this is rejected as range, which
@@ -425,6 +441,8 @@ async function startRound(io, lobby) {
   // Every bot gets a brain: a stream derived from the round seed and its slot.
   for (const p of lobby.players.values()) if (p.isBot) p.brain = createBotBrain(lobby.seed, botSlot(p.id));
   lobby.lastTickAt = null;
+  // Powerups: schedule, type and position off the seed; pickups by proximity on the tick
+  lobby.powerups = lobby.rules.powerups ? createPowerupState(lobby.seed, lobby.mapIndex, Date.now()) : null; // now, not lobby.startTime, which is set further down
 
   lobby.status = 'active';
   lobby.startTime = Date.now();
@@ -443,6 +461,7 @@ async function startRound(io, lobby) {
     const tickNow = Date.now();
     const timeLeft = Math.max(0, lobby.endTime - tickNow);
     driveBots(io, lobby, tickNow);
+    tickPowerups(io, lobby, tickNow);
     const players = [];
     for (const [id, p] of lobby.players) {
       players.push({

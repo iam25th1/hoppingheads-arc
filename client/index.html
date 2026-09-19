@@ -2760,7 +2760,11 @@ function spawnPowerup(){
   if(gameMode==='lbs'&&!lhsFirstKill)types=types.filter(function(t){return t.cat==='pos'});
   var type=types[Math.floor(Math.random()*types.length)];
   var pos=safePosInMap(0.35);
-  var x=pos.x,z=pos.z;
+  spawnPowerupAt(type,pos.x,pos.z,null);
+}
+// Build and place one powerup. Online classic the server decides type and position and
+// sends pw:spawn; solo (and LBS) roll their own above. id is the server's id, or null.
+function spawnPowerupAt(type,x,z,id){
   var g=new Group();
   // Unique 3D shape per powerup
   var geo,meshScale=1.2;
@@ -2805,7 +2809,7 @@ function spawnPowerup(){
     g.add(pp);
   }
   g.position.set(x,0.8,z);scene.add(g);
-  powerups.push({mesh:g,type:type,x:x,z:z,collected:false,age:0});
+  powerups.push({id:id,mesh:g,type:type,x:x,z:z,collected:false,age:0});
 }
 
 function collectPowerup(pw){
@@ -6085,6 +6089,11 @@ function connectMultiplayer(){
   socket.on('frag:taken',(d)=>{const f=fragments[d.id];if(!f||f.collected)return;f.collected=true;if(f.mesh.parent)scene.remove(f.mesh)});
   socket.on('frag:rejected',(d)=>{const f=fragments[d.id];if(!f)return;if(f.collected){f.collected=false;fragCounts[f.rarity]=Math.max(0,fragCounts[f.rarity]-1);score=Math.max(0,score-3);totalFragCount=getTotalFrags();f.mesh.visible=true;if(!f.mesh.parent)scene.add(f.mesh);updateHud()}showFloat('NOT COUNTED',0x6a6490,new Vector3(f.x,3,f.z))});
   socket.on('frag:respawn',(d)=>{applyRespawn(d.fragments)});
+  // Online classic: powerups are the server's. spawn: build it where told. taken: my own pickup runs the
+  // local effect (collectPowerup), anyone else's just removes the mesh. expire: remove.
+  socket.on('pw:spawn',(d)=>{const t=PW_CLASSIC.find(x=>x.id===d.type);if(!t)return;spawnPowerupAt(t,d.x,d.z,d.id)});
+  socket.on('pw:taken',(d)=>{const i=powerups.findIndex(p=>p.id===d.id);if(i<0)return;const pw=powerups[i];if(d.by===myPlayerId){collectPowerup(pw)}else{pw.collected=true;scene.remove(pw.mesh)}powerups.splice(i,1)});
+  socket.on('pw:expire',(d)=>{const i=powerups.findIndex(p=>p.id===d.id);if(i<0)return;const pw=powerups[i];pw.collected=true;scene.remove(pw.mesh);powerups.splice(i,1)});
   // The server refused a mint (no chest on record, too early, or over the cap). The local
   // mint already played out; the score that counts is the server's at round end.
   socket.on('mint:rejected',(d)=>{showFloat('MINT NOT COUNTED',0x6a6490,player.position.clone());console.warn('[MP] mint rejected:',d.reason)});
@@ -6514,8 +6523,9 @@ function animate(){
   }
 
   // ======= POWERUP TICK =======
-  pwSpawnTimer-=dt;
-  if(pwSpawnTimer<=0){spawnPowerup();pwSpawnTimer=gameMode==='lbs'?8:PW_SPAWN_INTERVAL}
+  // Online classic: the server spawns (pw:spawn) and resolves pickups (pw:taken). Solo and LBS roll locally.
+  const pwServerOwned=!!(socket&&mpConnected&&gameMode!=='lbs');
+  if(!pwServerOwned){pwSpawnTimer-=dt;if(pwSpawnTimer<=0){spawnPowerup();pwSpawnTimer=gameMode==='lbs'?8:PW_SPAWN_INTERVAL}}
   for(let i=powerups.length-1;i>=0;i--){
     const pw=powerups[i];if(pw.collected){powerups.splice(i,1);continue}
     pw.age+=dt;pw.mesh.children[0].rotation.y+=dt*2;pw.mesh.children[0].rotation.x+=dt*0.5;
@@ -6525,7 +6535,7 @@ function animate(){
     for(let pi=3;pi<pw.mesh.children.length;pi++){const pp=pw.mesh.children[pi];if(pp._pOff!==undefined){pp.position.y=(pp.position.y+dt*1.5)%2;pp.material.opacity=0.3+Math.sin(el*3+pp._pOff)*0.2}}
     if(pw.age>45){pw.collected=true;scene.remove(pw.mesh);powerups.splice(i,1);continue}
     const dx=player.position.x-pw.x,dz=player.position.z-pw.z;
-    if(Math.sqrt(dx*dx+dz*dz)<=PW_COLLECT_R){collectPowerup(pw);powerups.splice(i,1)}
+    if(!pwServerOwned&&Math.sqrt(dx*dx+dz*dz)<=PW_COLLECT_R){collectPowerup(pw);powerups.splice(i,1)}
   }
   // Effect countdown
   let effectsChanged=false;

@@ -94,11 +94,43 @@
     return { seed: seed, mapIndex: mapIndex, fragments: fragments, respawn: respawn };
   }
 
+  /**
+   * A stream of safe positions on a map, for things placed during a round
+   * that are not fragments (powerups). Seeded from the round seed with its
+   * last byte replaced by 0xff so it never overlaps a fragment or bot stream.
+   * range is the placement band, 0.35 for powerups as the client used.
+   */
+  function createPositionStream(seed, mapIndex, range) {
+    if (!prng.isHexSeed(seed)) throw new TypeError("createPositionStream: seed must be 0x followed by 64 hex digits");
+    if (!Number.isInteger(mapIndex) || mapIndex < 0 || mapIndex >= MAP_COUNT) throw new RangeError("createPositionStream: bad mapIndex");
+    const rng = prng.createRngFromHex(seed.slice(0, 64) + "ff");
+    const colliders = mapObstacles[mapIndex];
+    const band = typeof range === "number" ? range : PLACE_RANGE;
+    return {
+      next: function () {
+        for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+          const x = (rng.nextFloat() - 0.5) * MAP * band;
+          const z = (rng.nextFloat() - 0.5) * MAP * band;
+          let blocked = false;
+          for (let i = 0; i < colliders.length; i++) {
+            const c = colliders[i];
+            const dx = x - c[0], dz = z - c[1];
+            if (Math.sqrt(dx * dx + dz * dz) < c[2] + COLLIDER_MARGIN) { blocked = true; break; }
+          }
+          if (!blocked) return { x: x, z: z };
+        }
+        return { x: (rng.nextFloat() - 0.5) * MAP * FALLBACK_RANGE, z: (rng.nextFloat() - 0.5) * MAP * FALLBACK_RANGE };
+      },
+      nextFloat: function () { return rng.nextFloat(); },
+    };
+  }
+
   return {
     MAP: MAP,
     FRAG_N: FRAG_N,
     MAP_COUNT: MAP_COUNT,
     COLLECT_RADIUS: 3, // the client collects at dist <= 3 from the fragment's authoritative position
     createLayout: createLayout,
+    createPositionStream: createPositionStream,
   };
 });

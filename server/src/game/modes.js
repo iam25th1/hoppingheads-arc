@@ -17,6 +17,7 @@ export const MODES = Object.freeze({
     fragments: true,   // frag:collected is a real event, validated
     mints: true,       // mint:done is a real event, validated
     bots: true,        // the server fills empty seats with bots at countdown
+    powerups: true,    // the server spawns powerups and decides pickups
     stakeable: true,
     roundMode: "classic-online", // rounds.mode value
   }),
@@ -24,6 +25,7 @@ export const MODES = Object.freeze({
     fragments: false,  // no fragments in LBS; a claim is a wrong_mode rejection
     mints: false,
     bots: false,       // LBS resolves eliminations on the client; no server bot can play it
+    powerups: false,   // LBS powerups stay client side with the rest of LBS
     stakeable: false,
     roundMode: "lbs-online",
   }),
