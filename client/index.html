@@ -6042,6 +6042,10 @@ function connectMultiplayer(){
       gamePhase='countdown';
       document.getElementById('title-screen').style.display='none';
       if(arcadeCab){scene.remove(arcadeCab);arcadeCab=null}
+      // The menu is an arcade only scene with no map. An online round has to build the map
+      // it is about to play, the way startGame does for solo. colliders is empty exactly when
+      // no map is built; every map has at least 55.
+      if(colliders.length===0){switchMapInPlace(mapIdx);window._mapBuilt=true}
       scene.rotation.y=0;
       document.getElementById('title-screen').style.display='none';
       document.getElementById('coin').style.display='none';
