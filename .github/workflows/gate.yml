@@ -1,0 +1,31 @@
+name: gate
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      # Scripts are disabled on install. Nothing in this repo needs a
+      # postinstall, and a dependency that wants one should not get one.
+      - name: Install
+        run: npm ci --ignore-scripts
+
+      - name: Gate
+        run: npm run gate
+
+      # `npm run build` regenerates server/public/index.html from
+      # client/index.html. If that produces a diff, the mirror was committed
+      # stale and the gate above only passed because it fixed it in place.
+      - name: Mirror is committed in sync
+        run: git diff --exit-code

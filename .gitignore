@@ -1,0 +1,9 @@
+node_modules/
+.env
+*.log
+dist/
+artifacts/
+cache/
+typechain-types/
+.DS_Store
+.lint-tmp/

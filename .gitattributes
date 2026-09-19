@@ -1,0 +1,4 @@
+# Shell scripts and git hooks must keep LF line endings on Windows checkouts.
+# Git Bash's /bin/sh otherwise chokes on the CR bytes.
+*.sh text eol=lf
+scripts/git-hooks/* text eol=lf

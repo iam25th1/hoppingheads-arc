@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hopping Heads - Competitive Multiplayer Pixel Arena</title>
+<meta name="description" content="Competitive multiplayer pixel arena. Hop across 6 procedurally generated worlds. Collect fragments. Grow bigger. Absorb rivals. Fight to dominate.">
+<meta name="keywords" content="hopping heads, pixel game, multiplayer game, arena game, head game, browser game, competitive game, playtest">
+<meta name="author" content="Hopping Heads">
+<meta name="theme-color" content="#0a0614">
+
+<!-- Favicon -->
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="apple-touch-icon" href="/favicon.png">
+
+<!-- Open Graph (Facebook, LinkedIn, Discord) -->
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://hoppingheads.fun">
+<meta property="og:title" content="Hopping Heads - Competitive Multiplayer Pixel Arena">
+<meta property="og:description" content="Competitive multiplayer pixel arena. Hop across 6 procedurally generated worlds. Collect fragments. Grow bigger. Absorb rivals. Fight to dominate.">
+<meta property="og:image" content="https://hoppingheads.fun/og-banner.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:site_name" content="Hopping Heads">
+
+<!-- Twitter / X Card -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@hoppingheads">
+<meta name="twitter:creator" content="@hoppingheads">
+<meta name="twitter:title" content="Hopping Heads - Competitive Multiplayer Pixel Arena">
+<meta name="twitter:description" content="Competitive multiplayer pixel arena. Hop across 6 procedurally generated worlds. Collect fragments. Grow bigger. Absorb rivals. Fight to dominate.">
+<meta name="twitter:image" content="https://hoppingheads.fun/og-banner.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Silkscreen&display=swap" rel="stylesheet">
+<script src="/tracker.js" async></script>
+<style>
+:root{
+  --bg:#0a0614;--bg2:#0e0a1e;--bg3:#12102a;
+  --gold:#ffd54f;--gold2:#dda830;--gold3:#9a7520;
+  --purple:#8a5acc;--purple2:#6a3aaa;--purple3:#3d2560;
+  --green:#5cc06a;--cyan:#4a9ebb;--pink:#dd5588;--red:#ff6b6b;
+  --text:#e8e4f0;--dim:#8a80b0;--muted:#5a5478;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth;scrollbar-width:thin;scrollbar-color:var(--purple3) var(--bg)}
+body{background:var(--bg);color:var(--text);font-family:'Silkscreen',monospace;overflow-x:hidden}
+::selection{background:var(--purple);color:#fff}
+/* CRT scanline overlay */
+body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9999;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.04) 2px,rgba(0,0,0,0.04) 4px)}
+
+/* NAV */
+nav{position:fixed;top:0;left:0;right:0;z-index:100;padding:12px clamp(16px,4vw,40px);display:flex;align-items:center;justify-content:space-between;transition:all 0.3s}
+nav.scrolled{background:rgba(10,6,20,0.95);backdrop-filter:blur(10px);border-bottom:1px solid rgba(138,90,204,0.15)}
+.nav-logo{font-family:'Press Start 2P',monospace;font-size:clamp(9px,1.2vw,13px);color:var(--gold);letter-spacing:1px}
+.nav-logo span{color:var(--purple)}
+.nav-links{display:flex;gap:clamp(12px,2vw,28px);align-items:center}
+.nav-links a{font-family:'Silkscreen',monospace;font-size:clamp(9px,1vw,12px);color:var(--dim);text-decoration:none;transition:color 0.2s;letter-spacing:1px}
+.nav-links a:hover{color:var(--gold)}
+.nav-play{font-family:'Press Start 2P',monospace;font-size:clamp(8px,0.9vw,11px);color:var(--bg)!important;background:var(--gold);padding:clamp(8px,1vh,12px) clamp(16px,2vw,28px);border:none;cursor:pointer;transition:all 0.15s;box-shadow:0 3px 0 var(--gold3)}
+.nav-play:hover{transform:translateY(-1px);box-shadow:0 4px 0 var(--gold3)}
+.nav-play:active{transform:translateY(2px);box-shadow:0 1px 0 var(--gold3)}
+
+/* HERO */
+.hero{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;padding:clamp(80px,12vh,120px) clamp(16px,5vw,40px) clamp(40px,6vh,80px);text-align:center}
+.hero-bg{position:absolute;inset:0;overflow:hidden}
+.hero-bg::before{content:'';position:absolute;inset:-50%;background:radial-gradient(circle at 30% 40%,rgba(138,90,204,0.06) 0%,transparent 50%),radial-gradient(circle at 70% 60%,rgba(221,168,48,0.05) 0%,transparent 50%);animation:bgDrift 20s ease-in-out infinite alternate}
+@keyframes bgDrift{0%{transform:translate(0,0)}100%{transform:translate(30px,-20px)}}
+/* Floating pixel fragments */
+.hero-frag{position:absolute;width:10px;height:10px;transform:rotate(45deg);opacity:0.12;animation:fragFloat 5s ease-in-out infinite}
+@keyframes fragFloat{0%,100%{transform:rotate(45deg) translateY(0)}50%{transform:rotate(45deg) translateY(-20px)}}
+
+/* Giant idle blob - fills hero background */
+.hero-blob{position:absolute;top:50%;left:50%;transform:translate(-50%,-45%);width:90vmin;height:90vmin;opacity:0.1;z-index:0;animation:blobFloat 4s ease-in-out infinite}
+@keyframes blobFloat{0%,100%{transform:translate(-50%,-45%) translateY(0)}50%{transform:translate(-50%,-45%) translateY(-20px)}}
+.hero-blob svg{width:100%;height:100%}
+.blob-body{animation:breathe 3s ease-in-out infinite;transform-origin:center 60%}
+@keyframes breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.02,0.98)}}
+.blob-eye{animation:blink 4s ease-in-out infinite}
+.blob-eye-r{animation:blink 4s ease-in-out 0.05s infinite}
+@keyframes blink{0%,42%,48%,90%,96%,100%{transform:scaleY(1)}44%,46%{transform:scaleY(0.05)}92%,94%{transform:scaleY(0.05)}}
+.blob-pupils{animation:lookAround 8s ease-in-out infinite}
+@keyframes lookAround{0%,20%{transform:translateX(0)}25%,40%{transform:translateX(8px)}45%,55%{transform:translateX(-6px) translateY(2px)}60%,75%{transform:translateX(4px) translateY(-2px)}80%,100%{transform:translateX(0)}}
+.blob-mouth{animation:mouthMove 6s ease-in-out infinite;transform-origin:center}
+@keyframes mouthMove{0%,40%,100%{transform:scaleX(1)}50%,60%{transform:scaleX(1.15)}}
+
+.hero-badge{font-family:'Press Start 2P',monospace;font-size:clamp(7px,0.9vw,9px);color:var(--gold);border:1px solid rgba(255,213,79,0.25);padding:8px 18px;display:inline-flex;align-items:center;gap:8px;margin-bottom:clamp(16px,3vh,28px);animation:fadeUp 0.6s 0.2s both;position:relative;z-index:2}
+.hero-badge::before{content:'';width:6px;height:6px;background:var(--gold);border-radius:50%;animation:liveDot 2s infinite}
+@keyframes liveDot{0%,100%{opacity:1}50%{opacity:0.3}}
+
+.hero-title{font-family:'Press Start 2P',monospace;font-size:clamp(28px,7vw,72px);line-height:1.3;margin-bottom:clamp(12px,2vh,20px);animation:fadeUp 0.6s 0.4s both;position:relative;z-index:2}
+.t-gold{color:var(--gold);text-shadow:0 4px 0 var(--gold3),0 0 40px rgba(255,213,79,0.1)}
+.t-purple{color:var(--purple);text-shadow:0 4px 0 rgba(90,50,120,0.5)}
+
+.hero-sub{font-size:clamp(12px,1.6vw,18px);color:var(--dim);max-width:560px;line-height:1.8;margin-bottom:clamp(24px,4vh,40px);animation:fadeUp 0.6s 0.6s both;position:relative;z-index:2}
+
+.hero-cta{animation:fadeUp 0.6s 0.8s both;position:relative;z-index:2;display:flex;gap:clamp(10px,1.5vw,18px);flex-wrap:wrap;justify-content:center}
+.btn-primary{font-family:'Press Start 2P',monospace;font-size:clamp(10px,1.3vw,14px);color:var(--bg);background:var(--gold);padding:clamp(14px,2vh,20px) clamp(28px,4vw,52px);text-decoration:none;display:inline-block;transition:all 0.15s;letter-spacing:1px;box-shadow:0 4px 0 var(--gold3);cursor:pointer;border:none}
+.btn-primary:hover{transform:translateY(-2px);box-shadow:0 6px 0 var(--gold3)}
+.btn-primary:active{transform:translateY(2px);box-shadow:0 1px 0 var(--gold3)}
+.btn-ghost{font-family:'Press Start 2P',monospace;font-size:clamp(8px,1vw,11px);color:var(--dim);border:2px solid var(--purple3);padding:clamp(12px,1.8vh,18px) clamp(20px,3vw,36px);text-decoration:none;transition:all 0.2s;letter-spacing:1px}
+.btn-ghost:hover{color:var(--purple);border-color:var(--purple)}
+
+@keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+
+/* SCROLLING MAP TICKER */
+.ticker{overflow:hidden;padding:clamp(16px,2.5vh,24px) 0;border-top:1px solid rgba(138,90,204,0.08);border-bottom:1px solid rgba(138,90,204,0.08)}
+.ticker-inner{display:flex;gap:clamp(30px,5vw,60px);animation:tickScroll 25s linear infinite;width:max-content}
+@keyframes tickScroll{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+.ticker-item{font-family:'Press Start 2P',monospace;font-size:clamp(11px,1.8vw,18px);white-space:nowrap;opacity:0.2;transition:opacity 0.3s}
+.ticker-item:hover{opacity:0.7}
+
+/* FEATURES GRID */
+.features{padding:clamp(60px,10vh,120px) clamp(16px,5vw,40px);max-width:1100px;margin:0 auto}
+.features-label{font-family:'Press Start 2P',monospace;font-size:clamp(7px,0.9vw,10px);color:var(--purple);letter-spacing:4px;margin-bottom:clamp(12px,2vh,20px)}
+.features-title{font-family:'Press Start 2P',monospace;font-size:clamp(16px,3vw,30px);color:var(--gold);line-height:1.4;margin-bottom:clamp(30px,5vh,50px)}
+.feat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr));gap:clamp(12px,2vw,20px)}
+.feat-card{background:var(--bg2);border:1.5px solid rgba(100,80,160,0.15);padding:clamp(20px,3vh,30px) clamp(16px,2vw,24px);transition:all 0.3s;position:relative;overflow:hidden}
+.feat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--purple),transparent);opacity:0;transition:opacity 0.3s}
+.feat-card:hover{border-color:rgba(100,80,160,0.3);transform:translateY(-2px)}
+.feat-card:hover::before{opacity:1}
+.feat-icon{font-size:clamp(20px,3vw,28px);margin-bottom:clamp(8px,1.5vh,14px)}
+.feat-name{font-family:'Press Start 2P',monospace;font-size:clamp(9px,1.1vw,12px);color:var(--text);margin-bottom:clamp(6px,1vh,10px)}
+.feat-desc{font-size:clamp(11px,1.2vw,14px);color:var(--dim);line-height:1.7}
+
+/* HOW IT WORKS */
+.how{padding:clamp(60px,10vh,120px) clamp(16px,5vw,40px);max-width:900px;margin:0 auto}
+.steps{margin-top:clamp(20px,4vh,40px)}
+.step{display:flex;gap:clamp(16px,2.5vw,28px);align-items:flex-start;margin-bottom:clamp(28px,5vh,48px);position:relative}
+.step-num{font-family:'Press Start 2P',monospace;font-size:clamp(20px,3vw,32px);color:var(--gold);opacity:0.15;flex-shrink:0;width:clamp(36px,5vw,56px);text-align:right;line-height:1}
+.step-title{font-family:'Press Start 2P',monospace;font-size:clamp(10px,1.3vw,14px);color:var(--text);margin-bottom:clamp(4px,0.8vh,8px)}
+.step-desc{font-size:clamp(12px,1.3vw,15px);color:var(--dim);line-height:1.8}
+
+/* RARITY */
+.rarity{padding:clamp(60px,10vh,120px) clamp(16px,5vw,40px);max-width:700px;margin:0 auto;border-top:1px solid rgba(138,90,204,0.08)}
+.rarity-row{display:flex;align-items:center;gap:clamp(10px,1.5vw,20px);padding:clamp(12px,1.5vh,18px) 0;border-bottom:1px solid rgba(138,90,204,0.05);transition:padding-left 0.2s}
+.rarity-row:hover{padding-left:8px}
+.rarity-dot{width:clamp(10px,1.2vw,14px);height:clamp(10px,1.2vw,14px);transform:rotate(45deg);flex-shrink:0}
+.rarity-name{font-family:'Press Start 2P',monospace;font-size:clamp(8px,1vw,11px);width:clamp(80px,12vw,130px);flex-shrink:0}
+.rarity-pts{font-size:clamp(11px,1.2vw,14px);color:var(--dim);flex:1}
+.rarity-bar{height:4px;border-radius:2px;opacity:0.35}
+
+/* SKINS */
+.skins{padding:clamp(60px,10vh,120px) clamp(16px,5vw,40px);max-width:900px;margin:0 auto;text-align:center}
+.skin-row{display:flex;justify-content:center;gap:clamp(16px,3vw,32px);flex-wrap:wrap;margin-top:clamp(20px,4vh,40px)}
+.skin-card{display:flex;flex-direction:column;align-items:center;gap:8px}
+.skin-blob{width:clamp(50px,7vw,70px);height:clamp(50px,7vw,70px);border-radius:12px;display:flex;align-items:center;justify-content:center;transition:transform 0.2s;border:2px solid rgba(255,255,255,0.06)}
+.skin-blob:hover{transform:scale(1.1) rotate(-3deg)}
+.skin-blob svg{width:80%;height:80%}
+.skin-name{font-family:'Press Start 2P',monospace;font-size:clamp(6px,0.8vw,8px);letter-spacing:1px}
+
+/* STATS */
+.stats{display:flex;justify-content:center;gap:clamp(24px,5vw,80px);padding:clamp(50px,8vh,100px) clamp(16px,5vw,40px);border-top:1px solid rgba(138,90,204,0.08);border-bottom:1px solid rgba(138,90,204,0.08);flex-wrap:wrap}
+.stat{text-align:center}
+.stat-num{font-family:'Press Start 2P',monospace;font-size:clamp(24px,4vw,44px);color:var(--gold);text-shadow:0 3px 0 var(--gold3)}
+.stat-label{font-size:clamp(9px,1vw,12px);color:var(--dim);margin-top:clamp(4px,0.8vh,10px);letter-spacing:1px}
+
+/* CHAIN */
+.chain{text-align:center;padding:clamp(60px,10vh,120px) clamp(16px,5vw,40px)}
+.chain-badge{display:inline-flex;align-items:center;gap:10px;font-family:'Press Start 2P',monospace;font-size:clamp(8px,1vw,12px);color:var(--gold);border:1px solid rgba(255,213,79,0.2);padding:clamp(8px,1.2vh,14px) clamp(16px,2.5vw,28px);margin-bottom:clamp(16px,3vh,28px)}
+.chain-badge::before{content:'';width:8px;height:8px;background:var(--gold);border-radius:50%;animation:liveDot 2s infinite}
+.chain-text{font-size:clamp(12px,1.4vw,17px);color:var(--dim);max-width:550px;margin:clamp(12px,2vh,24px) auto 0;line-height:1.8}
+
+/* BOTTOM CTA */
+.cta-bottom{text-align:center;padding:clamp(80px,12vh,140px) clamp(16px,5vw,40px) clamp(60px,8vh,100px);position:relative}
+.cta-bottom::before{content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);width:1px;height:clamp(30px,5vh,60px);background:linear-gradient(180deg,transparent,var(--purple2))}
+.cta-title{font-family:'Press Start 2P',monospace;font-size:clamp(14px,3vw,28px);color:var(--text);margin-bottom:clamp(20px,4vh,36px);line-height:1.4}
+.cta-title span{color:var(--gold)}
+
+/* PLAYTEST ACCESS */
+.beta-section{text-align:center;padding:clamp(80px,12vh,140px) clamp(16px,5vw,40px) clamp(60px,8vh,100px);position:relative}
+.beta-section::before{content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);width:1px;height:clamp(30px,5vh,60px);background:linear-gradient(180deg,transparent,var(--purple2))}
+.beta-sub{font-size:clamp(12px,1.4vw,16px);color:var(--dim);margin:clamp(10px,2vh,20px) auto clamp(24px,4vh,40px);max-width:460px;line-height:1.7}
+.beta-box{background:var(--bg2);border:2px solid rgba(100,80,160,0.2);padding:clamp(24px,4vh,40px) clamp(20px,3vw,36px);max-width:420px;margin:0 auto;position:relative}
+.beta-box::before{content:'';position:absolute;top:0;left:10px;right:10px;height:2px;background:linear-gradient(90deg,transparent,var(--gold),transparent)}
+.beta-step-label{font-family:'Press Start 2P',monospace;font-size:clamp(7px,0.9vw,9px);color:var(--muted);letter-spacing:3px;margin-bottom:clamp(10px,1.5vh,16px)}
+.beta-btn{font-family:'Press Start 2P',monospace;font-size:clamp(9px,1.1vw,12px);color:var(--bg);background:var(--gold);padding:clamp(10px,1.5vh,14px) clamp(20px,3vw,32px);border:none;cursor:pointer;transition:all 0.15s;letter-spacing:1px;box-shadow:0 3px 0 var(--gold3);text-decoration:none;display:inline-block}
+.beta-disconnect{font-family:'Press Start 2P',monospace;font-size:clamp(7px,0.85vw,9px);color:var(--muted);background:transparent;padding:8px 16px;border:1px solid rgba(138,128,176,0.2);cursor:pointer;letter-spacing:1px;margin-top:18px;display:block;margin-left:auto;margin-right:auto;transition:all 0.15s}
+.beta-disconnect:hover{color:var(--red);border-color:rgba(255,107,107,0.3)}
+.beta-btn:hover{transform:translateY(-1px);box-shadow:0 4px 0 var(--gold3)}
+.beta-btn:active{transform:translateY(2px);box-shadow:0 1px 0 var(--gold3)}
+.beta-connected{font-family:'Press Start 2P',monospace;font-size:clamp(8px,1vw,11px);color:var(--green);margin-bottom:clamp(14px,2vh,20px)}
+.beta-connected span{color:var(--gold)}
+.beta-code-row{display:flex;gap:clamp(6px,1vw,10px);justify-content:center;align-items:center;flex-wrap:wrap}
+#beta-code-input{font-family:'Press Start 2P',monospace;font-size:clamp(10px,1.2vw,13px);background:var(--bg);border:2px solid var(--purple3);color:var(--text);padding:clamp(10px,1.5vh,14px) clamp(12px,1.5vw,18px);text-align:center;letter-spacing:2px;width:clamp(180px,22vw,220px);outline:none;transition:border-color 0.2s}
+#beta-code-input:focus{border-color:var(--gold)}
+#beta-code-input::placeholder{color:var(--muted);font-size:clamp(7px,0.9vw,10px)}
+.beta-msg{font-family:'Press Start 2P',monospace;font-size:clamp(7px,0.8vw,9px);margin-top:clamp(8px,1.2vh,14px);min-height:20px}
+.beta-msg.error{color:var(--red)}
+.beta-msg.success{color:var(--green)}
+.beta-granted{font-family:'Press Start 2P',monospace;font-size:clamp(16px,2.5vw,24px);color:var(--green);text-shadow:0 0 20px rgba(92,192,106,0.3)}
+.beta-granted-sub{font-size:clamp(11px,1.2vw,14px);color:var(--dim);margin-top:clamp(6px,1vh,12px)}
+.beta-waitlist{font-size:clamp(10px,1.1vw,13px);color:var(--muted);margin-top:clamp(16px,3vh,28px)}
+.beta-waitlist a{color:var(--gold);text-decoration:none}
+.beta-waitlist a:hover{text-decoration:underline}
+
+/* FOOTER */
+footer{padding:clamp(24px,4vh,40px) clamp(16px,5vw,40px);display:flex;justify-content:space-between;align-items:center;border-top:1px solid rgba(138,90,204,0.06);flex-wrap:wrap;gap:16px}
+.footer-left{font-family:'Press Start 2P',monospace;font-size:clamp(6px,0.8vw,9px);color:var(--muted);letter-spacing:1px}
+.footer-links{display:flex;gap:clamp(12px,2vw,24px)}
+.footer-links a{font-size:clamp(10px,1.1vw,13px);color:var(--dim);text-decoration:none;transition:color 0.2s}
+.footer-links a:hover{color:var(--gold)}
+.footer-credit{font-size:clamp(9px,1vw,12px);color:var(--muted)}
+.footer-credit a{color:var(--purple);text-decoration:none}
+
+@media(max-width:600px){
+  nav{padding:10px 16px}
+  .nav-links a:not(.nav-play){display:none}
+  .feat-grid{grid-template-columns:1fr}
+  .step{gap:12px}
+}
+</style>
+</head>
+<body>
+
+<nav id="nav">
+  <div class="nav-logo">HOPPING<span>HEADS</span></div>
+  <div class="nav-links">
+    <a href="javascript:void(0)" onclick="document.getElementById('features').scrollIntoView({behavior:'smooth'})">FEATURES</a>
+    <a href="javascript:void(0)" onclick="document.getElementById('how').scrollIntoView({behavior:'smooth'})">HOW TO PLAY</a>
+    <a href="/store">STORE</a>
+    <a href="#playtest" class="nav-play">JOIN PLAYTEST</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <div class="hero-bg">
+    <div class="hero-frag" style="background:#4a9ebb;top:18%;left:12%;animation-delay:0s"></div>
+    <div class="hero-frag" style="background:#5cc06a;top:32%;left:82%;animation-delay:1.2s"></div>
+    <div class="hero-frag" style="background:#8a5acc;top:65%;left:22%;animation-delay:2.4s"></div>
+    <div class="hero-frag" style="background:#dd5588;top:12%;left:68%;animation-delay:0.8s"></div>
+    <div class="hero-frag" style="background:#dda830;top:72%;left:75%;animation-delay:1.8s"></div>
+    <div class="hero-frag" style="background:#4a9ebb;top:48%;left:8%;animation-delay:3s"></div>
+    <div class="hero-frag" style="background:#5cc06a;top:82%;left:52%;animation-delay:2s"></div>
+    <div class="hero-frag" style="background:#ff6b6b;top:28%;left:92%;animation-delay:3.5s"></div>
+  </div>
+
+  <!-- Giant idle blob -->
+  <div class="hero-blob">
+    <svg viewBox="80 20 240 300" xmlns="http://www.w3.org/2000/svg">
+      <g class="blob-body">
+        <polygon points="128,120 145,40 162,120" fill="#444455"/>
+        <polygon points="238,120 255,40 272,120" fill="#444455"/>
+        <line x1="136" y1="80" x2="140" y2="105" stroke="#555566" stroke-width="3" opacity="0.3"/>
+        <line x1="246" y1="80" x2="250" y2="105" stroke="#555566" stroke-width="3" opacity="0.3"/>
+        <rect x="110" y="115" width="180" height="180" rx="38" fill="#ff8866"/>
+        <rect x="110" y="115" width="180" height="180" rx="38" fill="none" stroke="#dd6633" stroke-width="2.5"/>
+        <rect x="125" y="128" width="70" height="45" rx="18" fill="#ffcc99" opacity="0.2"/>
+        <g class="blob-pupils">
+          <g class="blob-eye" style="transform-origin:172px 195px">
+            <line x1="155" y1="180" x2="175" y2="200" stroke="#1a1a1a" stroke-width="8" stroke-linecap="round"/>
+            <line x1="175" y1="180" x2="155" y2="200" stroke="#1a1a1a" stroke-width="8" stroke-linecap="round"/>
+          </g>
+          <g class="blob-eye-r" style="transform-origin:228px 195px">
+            <line x1="220" y1="180" x2="240" y2="200" stroke="#1a1a1a" stroke-width="8" stroke-linecap="round"/>
+            <line x1="240" y1="180" x2="220" y2="200" stroke="#1a1a1a" stroke-width="8" stroke-linecap="round"/>
+          </g>
+        </g>
+        <ellipse cx="148" cy="225" rx="18" ry="10" fill="#ff8888" opacity="0.3"/>
+        <ellipse cx="252" cy="225" rx="18" ry="10" fill="#ff8888" opacity="0.3"/>
+        <g class="blob-mouth">
+          <path d="M182,248 Q200,268 218,248" fill="none" stroke="#1a1a1a" stroke-width="6" stroke-linecap="round"/>
+        </g>
+      </g>
+    </svg>
+  </div>
+
+  <div class="hero-badge">PLAYTEST</div>
+  <div class="hero-title">
+    <span class="t-gold">HOPPING</span><br>
+    <span class="t-purple">HEADS</span>
+  </div>
+  <div class="hero-sub">Competitive multiplayer pixel arena. Hop across 6 worlds. Collect fragments. Grow massive. Absorb your rivals. Last head hopping wins.</div>
+  <div class="hero-cta">
+    <a href="#playtest" class="btn-primary">JOIN PLAYTEST</a>
+    <a href="javascript:void(0)" onclick="document.getElementById('how').scrollIntoView({behavior:'smooth'})" class="btn-ghost">HOW IT WORKS</a>
+  </div>
+</div>
+
+<!-- Map ticker -->
+<div class="ticker">
+  <div class="ticker-inner">
+    <div class="ticker-item" style="color:#5cc06a">MEDIEVAL VILLAGE</div>
+    <div class="ticker-item" style="color:#dda830">DESERT OASIS</div>
+    <div class="ticker-item" style="color:#4a9ebb">FROZEN TUNDRA</div>
+    <div class="ticker-item" style="color:#dd5588">TROPICAL ISLANDS</div>
+    <div class="ticker-item" style="color:#8a5acc">HAUNTED GRAVEYARD</div>
+    <div class="ticker-item" style="color:#ff6b6b">CRYSTAL CAVERNS</div>
+    <div class="ticker-item" style="color:#5cc06a">MEDIEVAL VILLAGE</div>
+    <div class="ticker-item" style="color:#dda830">DESERT OASIS</div>
+    <div class="ticker-item" style="color:#4a9ebb">FROZEN TUNDRA</div>
+    <div class="ticker-item" style="color:#dd5588">TROPICAL ISLANDS</div>
+    <div class="ticker-item" style="color:#8a5acc">HAUNTED GRAVEYARD</div>
+    <div class="ticker-item" style="color:#ff6b6b">CRYSTAL CAVERNS</div>
+  </div>
+</div>
+
+<!-- Features -->
+<section class="features" id="features">
+  <div class="features-label">WHAT YOU GET</div>
+  <div class="features-title">Not your average<br>collect-a-thon.</div>
+  <div class="feat-grid">
+    <div class="feat-card">
+      <div class="feat-icon" style="color:var(--gold)">&#9733;</div>
+      <div class="feat-name">6 WORLDS</div>
+      <div class="feat-desc">Medieval villages, desert oases, frozen tundra, tropical islands, haunted graveyards, and crystal caverns. Each procedurally built.</div>
+    </div>
+    <div class="feat-card">
+      <div class="feat-icon" style="color:var(--red)">&#9829;</div>
+      <div class="feat-name">BOINK + ABSORB</div>
+      <div class="feat-desc">Knock other players back with boink. Steal their fragments on hit. If you're bigger, fully absorb them and watch them shatter into cubes. Jump to dodge. Shield blocks hits.</div>
+    </div>
+    <div class="feat-card">
+      <div class="feat-icon" style="color:var(--purple)">&#9830;</div>
+      <div class="feat-name">POWERUPS</div>
+      <div class="feat-desc">Speed, Shield, and Magnet pickups spawn across the map. Speed doubles your movement. Shield blocks boinks. Magnet triples fragment detection range.</div>
+    </div>
+    <div class="feat-card">
+      <div class="feat-icon" style="color:var(--green)">&#9824;</div>
+      <div class="feat-name">MULTIPLAYER</div>
+      <div class="feat-desc">Up to 8 players per lobby. Auto-matchmaking. Real-time positions, scores, and boinks. Connect your X account to play as @you.</div>
+    </div>
+    <div class="feat-card">
+      <div class="feat-icon" style="color:var(--cyan)">&#9827;</div>
+      <div class="feat-name">GROW + SHADOW</div>
+      <div class="feat-desc">Every fragment makes your head bigger. Bigger means stronger boink range but slower movement. Go shadow form for 7 seconds of invisibility. Fever zones drop every 45s for 3x points.</div>
+    </div>
+    <div class="feat-card">
+      <div class="feat-icon" style="color:var(--pink)">&#9826;</div>
+      <div class="feat-name">LEADERBOARD</div>
+      <div class="feat-desc">Scores persist. Top players ranked by total score and wins. Your stats accumulate across rounds. Connect X to claim your spot.</div>
+    </div>
+  </div>
+</section>
+
+<!-- How it works -->
+<section class="how" id="how">
+  <div class="features-label">THE LOOP</div>
+  <div class="features-title">Collect. Fight.<br>Dominate.</div>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">01</div>
+      <div>
+        <div class="step-title">COLLECT</div>
+        <div class="step-desc">Hop across the map finding rarity-tiered fragments. Common ones are everywhere. Legendaries are buried deep. Use Radar to reveal nearby hidden fragments.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">02</div>
+      <div>
+        <div class="step-title">FIGHT</div>
+        <div class="step-desc">Boink other players to steal fragments and deal damage. If you're bigger, fully absorb them. They shatter into cubes. Grab powerups. Use shadow form to go invisible for 7 seconds.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">03</div>
+      <div>
+        <div class="step-title">DOMINATE</div>
+        <div class="step-desc">Grow bigger than everyone. Absorb smaller heads to scatter their fragments. Grab the crown for +2 pts/sec while everyone hunts you. Use shadow form to escape or ambush. Open chests to heal.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Skins -->
+<section class="skins">
+  <div class="features-label">CHOOSE YOUR HEAD</div>
+  <div class="features-title">5 classic skins.</div>
+  <div class="skin-row">
+    <div class="skin-card">
+      <div class="skin-blob" style="background:rgba(255,136,102,0.12);border-color:rgba(255,136,102,0.2)">
+        <svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="14" fill="#ff8866"/><line x1="13" y1="15" x2="17" y2="19" stroke="#222" stroke-width="2"/><line x1="17" y1="15" x2="13" y2="19" stroke="#222" stroke-width="2"/><line x1="23" y1="15" x2="27" y2="19" stroke="#222" stroke-width="2"/><line x1="27" y1="15" x2="23" y2="19" stroke="#222" stroke-width="2"/><rect x="16" y="25" width="8" height="2" rx="1" fill="#222"/></svg>
+      </div>
+      <div class="skin-name" style="color:#ff8866">CORAL</div>
+    </div>
+    <div class="skin-card">
+      <div class="skin-blob" style="background:rgba(170,221,85,0.12);border-color:rgba(170,221,85,0.2)">
+        <svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="14" fill="#aadd55"/><rect x="14" y="15" width="3" height="3" fill="#222"/><rect x="23" y="15" width="3" height="3" fill="#222"/><rect x="16" y="25" width="8" height="2" rx="1" fill="#222"/></svg>
+      </div>
+      <div class="skin-name" style="color:#aadd55">LIME</div>
+    </div>
+    <div class="skin-card">
+      <div class="skin-blob" style="background:rgba(170,136,221,0.12);border-color:rgba(170,136,221,0.2)">
+        <svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="14" fill="#aa88dd"/><rect x="13" y="16" width="5" height="2" fill="#222"/><rect x="22" y="16" width="5" height="2" fill="#222"/><rect x="16" y="25" width="8" height="2" rx="1" fill="#222"/></svg>
+      </div>
+      <div class="skin-name" style="color:#aa88dd">GRAPE</div>
+    </div>
+    <div class="skin-card">
+      <div class="skin-blob" style="background:rgba(136,187,204,0.12);border-color:rgba(136,187,204,0.2)">
+        <svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="14" fill="#88bbcc"/><rect x="14" y="15" width="3" height="4" fill="#222"/><rect x="23" y="15" width="3" height="4" fill="#222"/><rect x="16" y="25" width="8" height="2" rx="1" fill="#222"/></svg>
+      </div>
+      <div class="skin-name" style="color:#88bbcc">STEEL</div>
+    </div>
+    <div class="skin-card">
+      <div class="skin-blob" style="background:rgba(221,204,85,0.12);border-color:rgba(221,204,85,0.2)">
+        <svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="14" fill="#ddcc55"/><line x1="13" y1="15" x2="17" y2="19" stroke="#222" stroke-width="2"/><line x1="17" y1="15" x2="13" y2="19" stroke="#222" stroke-width="2"/><line x1="23" y1="15" x2="27" y2="19" stroke="#222" stroke-width="2"/><line x1="27" y1="15" x2="23" y2="19" stroke="#222" stroke-width="2"/><rect x="16" y="25" width="8" height="2" rx="1" fill="#222"/></svg>
+      </div>
+      <div class="skin-name" style="color:#ddcc55">GOLD</div>
+    </div>
+  </div>
+</section>
+
+<!-- Rarity -->
+<section class="rarity">
+  <div class="features-label">RARITY TIERS</div>
+  <div class="features-title">Not all fragments<br>are equal.</div>
+  <div style="margin-top:clamp(16px,3vh,30px)">
+    <div class="rarity-row"><div class="rarity-dot" style="background:#4a9ebb"></div><div class="rarity-name" style="color:#4a9ebb">COMMON</div><div class="rarity-pts">10 pts</div><div class="rarity-bar" style="width:40px;background:#4a9ebb"></div></div>
+    <div class="rarity-row"><div class="rarity-dot" style="background:#5cc06a"></div><div class="rarity-name" style="color:#5cc06a">UNCOMMON</div><div class="rarity-pts">25 pts</div><div class="rarity-bar" style="width:65px;background:#5cc06a"></div></div>
+    <div class="rarity-row"><div class="rarity-dot" style="background:#8a5acc"></div><div class="rarity-name" style="color:#8a5acc">RARE</div><div class="rarity-pts">50 pts</div><div class="rarity-bar" style="width:100px;background:#8a5acc"></div></div>
+    <div class="rarity-row"><div class="rarity-dot" style="background:#dd5588"></div><div class="rarity-name" style="color:#dd5588">EPIC</div><div class="rarity-pts">100 pts</div><div class="rarity-bar" style="width:150px;background:#dd5588"></div></div>
+    <div class="rarity-row"><div class="rarity-dot" style="background:#dda830"></div><div class="rarity-name" style="color:#dda830">LEGENDARY</div><div class="rarity-pts">250 pts</div><div class="rarity-bar" style="width:220px;background:#dda830"></div></div>
+  </div>
+</section>
+
+<!-- Stats -->
+<div class="stats">
+  <div class="stat"><div class="stat-num">6</div><div class="stat-label">WORLDS</div></div>
+  <div class="stat"><div class="stat-num">2</div><div class="stat-label">MODES</div></div>
+  <div class="stat"><div class="stat-num">8</div><div class="stat-label">PLAYERS</div></div>
+  <div class="stat"><div class="stat-num">100</div><div class="stat-label">HP</div></div>
+  <div class="stat"><div class="stat-num">7s</div><div class="stat-label">SHADOW</div></div>
+</div>
+
+<!-- Game Modes -->
+<section class="chain">
+  <div class="chain-badge">TWO MODES</div>
+  <div class="features-title" style="text-align:center">Quick Play solo.<br>Or go online.</div>
+  <div class="chain-text">Classic mode: collect fragments, grow, absorb rivals, open chests, chase the crown. Last Head Hopping: no fragments, pure combat, 100 HP health bar, last head alive wins. Both modes playable online with up to 8 players.</div>
+</section>
+
+<!-- Playtest Access -->
+<section class="beta-section" id="playtest">
+  <div class="features-title" style="text-align:center">Join the <span style="color:var(--gold)">playtest</span>.</div>
+  <div class="beta-sub">Connect your X account, enter your playtest code, and you're in.</div>
+
+  <div class="beta-box">
+    <!-- Step 1: Connect X -->
+    <div id="beta-step1">
+      <div class="beta-step-label">STEP 1</div>
+      <a href="/auth/twitter?redirect=landing" class="beta-btn" id="beta-connect" onclick="window.hhTrack&&window.hhTrack('connect_x_click',{from:'landing'})">CONNECT X</a>
+    </div>
+
+    <!-- Step 2: Enter code (hidden until connected) -->
+    <div id="beta-step2" style="display:none">
+      <div class="beta-connected">Connected as <span id="beta-username">@user</span></div>
+      <div class="beta-step-label">STEP 2</div>
+      <div class="beta-code-row">
+        <input type="text" id="beta-code-input" placeholder="HOP-XXXX-XXXX" maxlength="16" autocomplete="off" spellcheck="false">
+        <button class="beta-btn" id="beta-redeem">REDEEM</button>
+      </div>
+      <div id="beta-msg" class="beta-msg"></div>
+      <button class="beta-disconnect" id="beta-disconnect-2">DISCONNECT X</button>
+    </div>
+
+    <!-- Access granted (hidden until redeemed) -->
+    <div id="beta-step3" style="display:none">
+      <div class="beta-granted">YOU'RE IN</div>
+      <div class="beta-granted-sub">Welcome as <span id="beta-username-3">@user</span></div>
+      <a href="https://play.hoppingheads.fun/game" class="btn-primary" style="margin-top:20px">PLAY NOW</a>
+      <button class="beta-disconnect" id="beta-disconnect-3">DISCONNECT X</button>
+    </div>
+  </div>
+
+  <div class="beta-waitlist">No code? Keep an eye on <a href="https://x.com/hoppingheads" target="_blank">@hoppingheads</a> for drops.</div>
+  <div style="font-size:clamp(9px,1vw,11px);color:var(--muted);margin-top:14px;max-width:420px;margin-left:auto;margin-right:auto;line-height:1.6">By joining the playtest, you agree to our <a href="/terms" style="color:var(--dim)">Terms of Service</a> and <a href="/privacy" style="color:var(--dim)">Privacy Policy</a>.</div>
+</section>
+
+<footer>
+  <div class="footer-left">HOPPING HEADS 2026</div>
+  <div class="footer-links">
+    <a href="https://x.com/hoppingheads" target="_blank">X</a>
+    <a href="https://github.com/iam25th1" target="_blank">GitHub</a>
+    <a href="/terms">Terms</a>
+    <a href="/privacy">Privacy</a>
+    <a href="#playtest">Playtest</a>
+  </div>
+</footer>
+
+<script>
+const nav=document.getElementById('nav');
+window.addEventListener('scroll',()=>nav.classList.toggle('scrolled',window.scrollY>50));
+const ticker=document.querySelector('.ticker-inner');
+if(ticker){ticker.addEventListener('mouseenter',()=>ticker.style.animationPlayState='paused');ticker.addEventListener('mouseleave',()=>ticker.style.animationPlayState='running')}
+const obs=new IntersectionObserver(entries=>{entries.forEach(e=>{if(e.isIntersecting){e.target.style.opacity='1';e.target.style.transform='translateY(0)'}})},{threshold:0.1});
+document.querySelectorAll('.feat-card,.step,.rarity-row,.stat,.skin-card,.chain-badge,.features-title').forEach(el=>{el.style.opacity='0';el.style.transform='translateY(16px)';el.style.transition='opacity 0.5s, transform 0.5s';obs.observe(el)});
+
+// Scroll to playtest section on click
+document.querySelectorAll('a[href="#playtest"]').forEach(a=>{
+  a.addEventListener('click',e=>{
+    e.preventDefault();
+    const target=document.getElementById('playtest');
+    if(target)target.scrollIntoView({behavior:'smooth',block:'center'});
+  });
+});
+// Auto-scroll if URL has #beta
+if(location.hash==='#playtest'){
+  setTimeout(()=>{
+    const target=document.getElementById('playtest');
+    if(target)target.scrollIntoView({behavior:'smooth',block:'center'});
+  },500);
+}
+
+// ===== PLAYTEST ACCESS FLOW =====
+(function(){
+  const step1=document.getElementById('beta-step1');
+  const step2=document.getElementById('beta-step2');
+  const step3=document.getElementById('beta-step3');
+  const msg=document.getElementById('beta-msg');
+
+  // Check URL for session from Twitter OAuth callback
+  const params=new URLSearchParams(location.search);
+  const sessionParam=params.get('session');
+  if(sessionParam){
+    localStorage.setItem('hh_session',sessionParam);
+    // Clean URL
+    history.replaceState(null,'',location.pathname+location.hash);
+  }
+
+  const session=localStorage.getItem('hh_session');
+
+  if(!session){
+    // Not connected -- show step 1
+    return;
+  }
+
+  // Connected -- check if already has playtest access
+  fetch('/api/beta/check?session='+encodeURIComponent(session))
+    .then(r=>r.json())
+    .then(data=>{
+      // Always fetch username so it shows on both steps
+      fetch('/auth/me?token='+encodeURIComponent(session))
+        .then(r=>r.json())
+        .then(d=>{
+          if(d.user){
+            const u='@'+d.user.username;
+            document.getElementById('beta-username').textContent=u;
+            document.getElementById('beta-username-3').textContent=u;
+          }
+        });
+      if(data.access){
+        // Already has access
+        step1.style.display='none';
+        step3.style.display='block';
+        setPlayLink(session);
+      }else{
+        // Connected but no access -- show code input
+        step1.style.display='none';
+        step2.style.display='block';
+      }
+    })
+    .catch(()=>{
+      // API error, show connect anyway
+    });
+
+  // Helper: build play URL with session for cross-subdomain handoff
+  function setPlayLink(sess){
+    const links=document.querySelectorAll('#beta-step3 a.btn-primary');
+    links.forEach(a=>{
+      a.href='https://play.hoppingheads.fun/game?session='+encodeURIComponent(sess);
+    });
+  }
+
+  // Disconnect handlers
+  function disconnectX(){
+    if(!confirm('Disconnect X account?'))return;
+    localStorage.removeItem('hh_session');
+    location.reload();
+  }
+  document.getElementById('beta-disconnect-2')?.addEventListener('click',disconnectX);
+  document.getElementById('beta-disconnect-3')?.addEventListener('click',disconnectX);
+
+  // Redeem button
+  const redeemBtn=document.getElementById('beta-redeem');
+  const codeInput=document.getElementById('beta-code-input');
+
+  if(redeemBtn)redeemBtn.addEventListener('click',async()=>{
+    const code=codeInput.value.trim();
+    if(!code){msg.textContent='Enter a code';msg.className='beta-msg error';return}
+    window.hhTrack&&window.hhTrack('code_redeem_attempt');
+    redeemBtn.textContent='...';
+    redeemBtn.disabled=true;
+
+    try{
+      const res=await fetch('/api/beta/redeem',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({code,session})
+      });
+      const data=await res.json();
+
+      if(data.success){
+        window.hhTrack&&window.hhTrack('code_redeem_success');
+        step2.style.display='none';
+        step3.style.display='block';
+        setPlayLink(session);
+      }else{
+        msg.textContent=data.error||'Invalid code';
+        msg.className='beta-msg error';
+        redeemBtn.textContent='REDEEM';
+        redeemBtn.disabled=false;
+      }
+    }catch(err){
+      msg.textContent='Network error';
+      msg.className='beta-msg error';
+      redeemBtn.textContent='REDEEM';
+      redeemBtn.disabled=false;
+    }
+  });
+
+  // Enter key on input
+  if(codeInput)codeInput.addEventListener('keydown',e=>{
+    if(e.key==='Enter')redeemBtn.click();
+  });
+
+  // Auto-uppercase input
+  if(codeInput)codeInput.addEventListener('input',()=>{
+    codeInput.value=codeInput.value.toUpperCase();
+  });
+})();
+</script>
+</body>
+</html>
