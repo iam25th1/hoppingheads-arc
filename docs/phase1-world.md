@@ -117,11 +117,28 @@ Every failure increments `p.rejections[reason]` and `p.rejections.total`, logs `
 
 ## Movement
 
-The speed clamp still clamps, so a latency spike does not eject an honest player, but it now increments `p.violations.move` and logs `[MP] FLAG pos` on the first three and every fiftieth after. No ejection.
+Overspeed is clamped, never ejected, so a latency spike does not punish an honest player; it is counted on `p.violations.move` and logged (first three, then every fiftieth). The round end line is `[MP] Flags lobby <id> <player>: rejections={...} moveClamps=N`. Phase 5 reads these.
 
-**A finding the counter surfaced, not fixed in this phase.** The clamp allows `adjustedMaxSpeed * elapsed + 2` per update. That 2 unit knockback margin is per update, so at 15 updates a second it buys 28 units a second on top of the 25 cap: roughly 53 units a second before a clamp fires. In a real session a teleport of 322 units was flagged at once, while a continuous 43 unit per second hack (2.4 times the real 18) ran for 60 updates unflagged. A slow continuous cheat under about 2.9x is still invisible to this counter. The fix is a margin that does not scale with update rate (a rolling window over the last second, or a per second knockback allowance); that changes the clamp formula itself and belongs to phase 5 hardening.
+**The formula (`server/src/game/movement.js`).** The old rule allowed `maxSpeed * elapsed + 2` per update. The 2 unit knockback margin was granted on every update, so at 15 updates a second it bought 28 units a second on top of the cap and a continuous 43 unit per second hack (2.4x) ran unflagged. Now:
 
-At round end every player with a nonzero tally gets one line: `[MP] Flags lobby <id> <player>: rejections={...} moveClamps=N`. Phase 5 reads these.
+- **No constant margin.** Speed is judged as path length over the last 600ms of history against `maxSpeed` times the window's real span. The window is what makes it latency tolerant: updates that arrive bunched after a stall are judged over the span they really cover, and a silent gap is credited as walking time, since honest clients send every 100ms for the whole round.
+- **Knockback is a budget, not a margin.** The boink handler grants the target 8 units for 700ms. It is spent on a step's excess over the walking allowance, once, and never reapplied. No boink on record, no margin. (A hit moves a player at 15 units a second for up to 0.5s.)
+- **The cap is the real ceiling: 36 units a second**, the client's base 18 doubled by the speed powerup. The server cannot see powerups, so a hack at or under 2x is indistinguishable from a boosted player until powerups move server side. Everything above is caught within one window.
+
+**Threshold, measured.** Flagging begins at **2.01x base speed (36.18 u/s)**; at 2.05x, 59 of 60 updates flag from the second update on, and the server position falls behind the reported one (3.7 units at 2.05x, 29.7 at 2.4x, over 60 updates). Honest 18 u/s and boosted 36 u/s traffic with arrival jitter of 20/120ms, 10/10/10/10/310ms and 5/200ms raises zero flags. Live: honest and boosted never flagged; the 2.4x hack flagged from its first window (`path 3.0 over 71ms, allowed 2.6`) and every update after; a teleport flagged at once.
+
+<details>
+<summary>Still able to flag an honest player</summary>
+
+Anything that moves a client faster than 36 units a second without a boink the server verified:
+
+- A **boosted** player hit by a **client side NPC boink** in an online round (bots run on each client in online rounds too), or by a quake or bouncy powerup in LBS. 36 plus 15 for 0.3s: a few flags, then clean. Unboosted players hit the same way stay under the cap and do not flag.
+- The **absorb respawn**, which teleports the player to a random spot client side. One flag, then the server position walks there at the cap.
+
+These are the same events the old formula also flagged, so no honest player is newly affected, and LBS is unstaked. Bringing powerups and absorbs server side removes them; phase decision.
+</details>
+
+**Whether honest high latency play now false flags cannot be confirmed headlessly.** The jitter patterns above are synthetic. Manual check: play a full online classic round on a normal connection, then read the round end `Flags` line for your address in the server log (`pier logs hh-arc`). `moveClamps` should be 0, or within a handful that line up with being boinked while boosted. Repeat on a poor connection (a phone on cellular, or a throttled browser profile) and expect the same.
 
 ## What the sessions showed
 
@@ -144,7 +161,7 @@ A classic, B lbs, C lbs, D bogus -> lobbies 1, 2, 2, 1; B's claim and mint -> wr
 round:end [["0xe1fa..e6a9",22,4,1,1],["0xdb24..1af9",0,0,0,2]]
 ```
 
-On the build before commit 4 the same B finished the round on 1250 points from five phantom legendary mints. On the final build B finished on 0. The teleport flag and the continuous speed hack finding came from a separate movement session, below.
+On the build before commit 4 the same B finished the round on 1250 points from five phantom legendary mints. On the final build B finished on 0. The movement results are in the Movement section above.
 
 ## Still client authoritative after this phase
 
