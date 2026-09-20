@@ -5,7 +5,7 @@
   "autostart": false,
   "deploySteps": [
     "git fetch --quiet origin",
-    "git checkout --quiet PINNED_COMMIT",
+    "git checkout --quiet 3d2dfa1c086949f97f90a2a82046acf7c759e83b",
     "npm ci --ignore-scripts"
   ],
   "notes": "Settlement worker for Hopping Heads Arc. Holds OPERATOR_KEY; asks hh-arc-signer for signatures over loopback. Register from its own clone of the repo. Env (OPERATOR_KEY, CHAIN_ID, ARC_RPC_URL, ESCROW_ADDRESS, DATABASE_URL, SIGNER_URL, SIGNER_TOKEN, POLL_MS, RECEIPT_DEADLINE_MS, MAX_ATTEMPTS, SETTLE_VIA_MEMO) lives in Pier; see .env.example. Deploy checks out the reviewed commit named in deploySteps, never pulls. Log lines starting with ALERT are the ones to page on."
