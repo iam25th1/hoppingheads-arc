@@ -3,7 +3,7 @@
 // refuses or never mines one. Against arc-anvil the refusal is an RPC error; against testnet
 // it is silence, so the second check waits for a receipt and reports its absence.
 import { createPublicClient, createWalletClient, http, parseGwei, formatUnits } from 'viem';
-import { privateKeyToAccount } from 'viem/accounts';
+import { privateKeyToAccount, mnemonicToAccount } from 'viem/accounts';
 import { foundry } from 'viem/chains';
 import { fees, FEE_FLOOR, network, clients } from './lib.mjs';
 
@@ -15,10 +15,12 @@ const f = await fees(pub);
 if (f.maxFeePerGas < FEE_FLOOR) { console.error('[floor] harness fee rule broken'); process.exit(1); }
 console.log(`[floor] harness maxFeePerGas ${formatUnits(f.maxFeePerGas, 9)} gwei (floor 20) on ${net.name}`);
 
-// a throwaway sender: arc-anvil's ninth default account locally, PLAYER_KEY elsewhere
-const key = isLocal ? '0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97' : process.env.PLAYER_KEY;
-if (!key) { console.log('[floor] no key for the live check; harness rule verified only'); process.exit(0); }
-const account = privateKeyToAccount(key);
+// A throwaway sender: locally, arc-anvil's tenth default account, derived from Foundry's
+// published test mnemonic so no key sits in the repo; elsewhere, PLAYER_KEY.
+const account = isLocal
+  ? mnemonicToAccount('test test test test test test test test test test test junk', { accountIndex: 9 })
+  : process.env.PLAYER_KEY ? privateKeyToAccount(process.env.PLAYER_KEY) : null;
+if (!account) { console.log('[floor] no key for the live check; harness rule verified only'); process.exit(0); }
 const wallet = createWalletClient({ account, chain: net.chain, transport: http(net.url) });
 try {
   const hash = await wallet.sendTransaction({ account, to: account.address, value: 0n, maxFeePerGas: parseGwei('1'), maxPriorityFeePerGas: parseGwei('1') });

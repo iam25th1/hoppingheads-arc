@@ -13,7 +13,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
   createPublicClient, createWalletClient, http, parseGwei, formatUnits, parseUnits, getAddress, isAddress,
-  encodeFunctionData, keccak256, hashTypedData, toHex, maxUint256,
+  encodeFunctionData, decodeEventLog, keccak256, hashTypedData, toHex, maxUint256,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { arcTestnet, arc, foundry } from 'viem/chains';
@@ -252,8 +252,14 @@ export async function settle(roundId, placements, useMemo = null) {
     // Stamped through Arc's Memo predeploy: the call runs from the operator (callFrom keeps the
     // sender) and the explorer shows a Memo event carrying the roundId.
     const r = await send(ctx, 'settleRound via Memo', { address: MEMO, abi: MEMO_ABI, functionName: 'memo', args: [esc, data, roundId, toHex(`hh-arc settle ${rec.label || ''}`.trim())] });
-    const memoLog = r.logs.find((l) => l.address.toLowerCase() === MEMO.toLowerCase());
-    console.log(`  memo event: ${memoLog ? 'present, memoId ' + memoLog.topics[3] : 'MISSING'}`);
+    // The predeploy emits BeforeMemo then Memo; decode the Memo one and report its index.
+    const memoEvent = MEMO_ABI.find((x) => x.type === 'event' && x.name === 'Memo');
+    let stamped = null;
+    for (const l of r.logs) {
+      if (l.address.toLowerCase() !== MEMO.toLowerCase()) continue;
+      try { const d = decodeEventLog({ abi: [memoEvent], data: l.data, topics: l.topics }); stamped = d.args; } catch { /* BeforeMemo or another shape */ }
+    }
+    console.log(stamped ? `  memo event: index ${stamped.memoIndex}, memoId ${stamped.memoId}, sender ${stamped.sender}, target ${stamped.target}` : '  memo event: MISSING');
   } else {
     await send(ctx, 'settleRound', { address: esc, abi, functionName: 'settleRound', args: [roundId, ps, rec.seed, signature] });
   }
