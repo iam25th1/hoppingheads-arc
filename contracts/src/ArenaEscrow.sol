@@ -94,8 +94,8 @@ contract ArenaEscrow is IArenaSettlement, Ownable2Step, Pausable, ReentrancyGuar
 
     // ---- rounds ----
     struct Round {
-        bytes32 seedCommit;
-        uint64 openedAtBlock; // 0 means never opened
+        bytes32 seedCommit; // non zero exactly when the round has been opened
+        uint64 openedAtBlock; // informational: a round opened in block 0 is still open
         bool settled;
         uint32 entrants;
     }
@@ -179,7 +179,7 @@ contract ArenaEscrow is IArenaSettlement, Ownable2Step, Pausable, ReentrancyGuar
     function openRound(bytes32 roundId, bytes32 seedCommit) external override onlyOperator whenNotPaused {
         if (roundId == bytes32(0) || seedCommit == bytes32(0)) revert BadCommit();
         Round storage r = rounds[roundId];
-        if (r.openedAtBlock != 0) revert RoundExists();
+        if (r.seedCommit != bytes32(0)) revert RoundExists();
         r.seedCommit = seedCommit;
         // block.number fits uint64 for longer than the chain will exist
         // forge-lint: disable-next-line(unsafe-typecast)
@@ -214,7 +214,7 @@ contract ArenaEscrow is IArenaSettlement, Ownable2Step, Pausable, ReentrancyGuar
 
     function _seat(bytes32 roundId, address player) internal {
         Round storage r = rounds[roundId];
-        if (r.openedAtBlock == 0) revert RoundNotOpen();
+        if (r.seedCommit == bytes32(0)) revert RoundNotOpen();
         if (r.settled) revert AlreadySettled();
         if (entered[roundId][player]) revert AlreadyEntered();
         entered[roundId][player] = true;
@@ -228,7 +228,7 @@ contract ArenaEscrow is IArenaSettlement, Ownable2Step, Pausable, ReentrancyGuar
         whenNotPaused
     {
         Round storage r = rounds[roundId];
-        if (r.openedAtBlock == 0) revert RoundNotOpen();
+        if (r.seedCommit == bytes32(0)) revert RoundNotOpen();
         if (r.settled) revert AlreadySettled();
         if (placements.length > MAX_PLACEMENTS) revert TooManyPlacements();
         if (commitFor(seed) != r.seedCommit) revert BadCommit();
