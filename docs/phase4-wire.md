@@ -102,6 +102,21 @@ After the three rounds: pool 8.90 USDC (three entries in, one 1.20 payout out), 
 
 The same flow ran first against arc-anvil with a locally deployed escrow and the services pointed at it (settled directly, since that node lacks the Memo precompile): an idle seat fourth behind three bots with no payout, then a solo seat first with $1.20 claimed. Identical screens, identical records.
 
+## Seats and reconnects (phase 4b)
+
+A seat is keyed by the wallet and held by one socket at a time. What "This wallet is already in a lobby" actually was: a second live connection for the same wallet, an older tab still sitting in a lobby (every phase auto opened one), while a reload, a closed tab or a dropped network all rejoined within milliseconds (measured: 3 ms after a close, 2 ms after a TCP drop, 36 ms after a real reload). The rule now (`server/src/game/seats.js`):
+
+| the wallet joins again while | outcome |
+|---|---|
+| its seat waits for the countdown or is in it, on a live older socket (a second tab) | the newest connection takes the seat; the old tab is told and cut |
+| its seat waits or is in the countdown, socket gone | the seat is reclaimed as it was, stake and all; a countdown in progress is replayed so the map builds |
+| a live round, socket gone (a reload mid round) | the seat departs at its score and settles; the player joins a fresh lobby |
+| a live round on a live socket (a second tab mid round) | refused: "This wallet is playing a round in another tab" |
+
+And when a socket goes away: a live round freezes the seat with its score; a **staked** seat before the round keeps waiting for its player (socket cleared, `player:away` to the room) and a lobby with only away staked seats waits two minutes before it is abandoned, with an `ALERT` naming the seats whose stakes stay in the pool; an unstaked seat before the round is dropped at once and an empty lobby is abandoned. Only the socket that holds a seat may act on leaving it, so a kicked older tab cannot drop a reclaimed seat. A refused connection (ten a minute per address) is now said on the wallet bar instead of failing in silence, and no browser `alert()` remains anywhere in the client.
+
+Measured on the local chain: stake, reload mid wait, back as `STAKED $0.50` in 20 ms with no new transaction and the balance unchanged; stake, close the tab during the countdown, open a new one, the seat is reclaimed with the countdown replayed and the map built, the round plays and settles `$1.20 CLAIMABLE`.
+
 ## Threat model, what changed
 
 | threat | outcome |
@@ -115,6 +130,9 @@ The same flow ran first against arc-anvil with a locally deployed escrow and the
 | operator key stolen | can open and submit real signatures; cannot forge |
 | a human staked and left before the countdown | stake stays in the pool; no refund path exists; a `refundRound` in the contract is the phase 5 fix |
 | settlement delayed or dead | the results screen says so and the stake is recorded; the round is retried or dead lettered with the error in `chain_error` |
+| a second tab steals a seat | it is the same verified wallet; the newest connection wins before the round and is refused during one |
+| a kicked tab drops the seat on its way out | only the socket that holds the seat may act on leaving it |
+| a staked player never comes back before the countdown | the seat plays the round absent (placed by its score, no payout); a lobby that never starts is abandoned after two minutes with an ALERT and the stake stays in the pool |
 
 ## Manual checks, not confirmed headlessly
 
@@ -124,6 +142,7 @@ A green gate proves the plumbing. It does not prove a player understands what ha
 - **The pending and failure states as a player sees them.** Cancel the wallet prompt: the button must read RETRY STAKE $0.50 with STAKE FAILED: CANCELLED IN WALLET under it. Let a transaction sit: TX PENDING with the explorer link. Reject the approval: the same. Nothing may read gwei.
 - **Whether the claim flow is clear.** After a winning round the results screen must say the amount and CLAIM FROM THE MENU; CLAIM must show the dollar amount, one wallet prompt, CLAIMED with the link, and the balance moving in the wallet.
 - **Stake, leave, return.** Stake, hit BACK, re-enter ARENA within the wait: the seat must come back as STAKED without a second charge (the server recognises the entry).
+- **Reload and tabs (phase 4b).** Enter the Arena, reload mid wait, confirm you are back in; enter, close the tab, reopen, confirm the same; stake, reload, confirm the button reads STAKED $0.50 with no new wallet prompt and the balance unchanged; open the Arena in a second tab, confirm the second tab is in and the first says it was entered from another tab. Whether any of it feels right cannot be confirmed headlessly.
 
 _(a phone or desktop recording of stake, play, settle, claim goes here once someone runs it)_
 

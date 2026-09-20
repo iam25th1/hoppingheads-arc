@@ -4841,18 +4841,18 @@ async function verifyWalletSession(){
 }
 verifyWalletSession();
 async function connectWallet(){
-  if(!window.ethereum){alert('No wallet found. Install a browser wallet to play online.');return}
+  if(!window.ethereum){showArenaHint('No wallet found. Install a browser wallet for the Arena',4000);return}
   try{
     const accounts=await window.ethereum.request({method:'eth_requestAccounts'});
     const address=accounts&&accounts[0];
     if(!address)return;
     const r1=await fetch('/auth/nonce',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({address})});
     const c=await r1.json();
-    if(!c.message){alert(c.error||'Sign in unavailable');return}
+    if(!c.message){showArenaHint(c.error||'Sign in unavailable',4000);return}
     const signature=await window.ethereum.request({method:'personal_sign',params:[c.message,address]});
     const r2=await fetch('/auth/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({address,signature})});
     const d=await r2.json();
-    if(!d.token){alert(d.error||'Sign in failed');return}
+    if(!d.token){showArenaHint(d.error||'Sign in failed',4000);return}
     localStorage.setItem('hh_wallet_session',d.token);walletSession=d.token;
     walletUser={address:d.address,short:shortAddr(d.address)};updateWalletBar();
   }catch(e){console.warn('[Auth] Sign in cancelled or failed:',e.message)}
@@ -5502,7 +5502,7 @@ function startGame(){
   if(gameMode!=='multiplayer'&&!soloRound){
     if(pendingSoloRound)return;
     pendingSoloRound=true;
-    requestSoloRound().then(r=>{pendingSoloRound=false;if(!r){alert('Could not start the round. Is the server up?');return}soloRound=r;startGame()}).catch(()=>{pendingSoloRound=false;alert('Could not start the round. Is the server up?')});
+    requestSoloRound().then(r=>{pendingSoloRound=false;if(!r){showArenaHint('Could not start the round. Is the server up?',4000);return}soloRound=r;startGame()}).catch(()=>{pendingSoloRound=false;showArenaHint('Could not start the round. Is the server up?',4000)});
     return;
   }
   // Build the map if we're still on the menu arcade scene. Classic mode path
@@ -6167,6 +6167,14 @@ function connectMultiplayer(){
   if(socket)return;
   let hasJoined=false;
   socket=io(location.origin,{transports:['websocket'],reconnection:true,reconnectionDelay:2000,reconnectionAttempts:5});
+  // A refused connection (the server allows ten a minute per address) used to fail in
+  // silence on the lobby page. Say it, and go back to the menu.
+  socket.on('connect_error',(e)=>{
+    const m=e&&e.message==='Too many connections'?'Too many connections from here. Wait a minute and try again':'Could not reach the lobby: '+((e&&e.message)||'connection error');
+    showArenaHint(m,5000);
+    if(socket){socket.disconnect();socket=null;mpConnected=false}
+    showMenuPage('main');
+  });
   socket.on('connect',()=>{
     console.log('[MP] Connected');
     // Only quickmatch once, not on reconnects
