@@ -12,6 +12,7 @@ Phase records:
 - [docs/phase2d-arena.md](docs/phase2d-arena.md): the Arena wait and the Arena map. Per mode lobby wait, and the recon that found online rounds had no map.
 - [docs/phase2e-spawn.md](docs/phase2e-spawn.md): where seats start. Spawns off the seed, the bot gate, the damage gate, and the cabinet the countdown left at the origin.
 - [docs/phase2f-visual.md](docs/phase2f-visual.md): the menu and the lobby against the original. Both unchanged, with the function hashes, the bisect and the scene census that show it; local NPCs hidden through the Arena countdown.
+- [docs/phase2g-menumap.md](docs/phase2g-menumap.md): the map behind the menu, restored at cold load and on return from a round; the countdown asks the round flag, not the world.
 
 ## Run it
 
