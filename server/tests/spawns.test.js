@@ -44,11 +44,9 @@ test('spawns: never at the origin, which is an obstacle on five maps and the old
 test('spawns: their own stream, and the default stream is unchanged for powerups', () => {
   const a = layout.createPositionStream(SEED, 1, 0.35), b = layout.createPositionStream(SEED, 1, 0.35, 'ff');
   for (let i = 0; i < 5; i++) assert.deepEqual(a.next(), b.next());
-  // A tag replaces the seed's last byte, one byte of one xoshiro state word, and the first two
-  // outputs depend only on another word: every tagged stream shares its opening two draws with
-  // the raw seed's stream (the layout). They diverge from the third draw. Asserted as it is.
+  // A tag replaces the seed's last byte. Since the phase 3 warm up in createRngFromHex the
+  // spawn stream and the powerup stream differ from their first draw.
   const pw = layout.createPositionStream(SEED, 1, SPAWN_RANGE), sp = layout.createPositionStream(SEED, 1, SPAWN_RANGE, SPAWN_TAG);
-  assert.equal(pw.nextFloat(), sp.nextFloat()); assert.equal(pw.nextFloat(), sp.nextFloat());
   assert.notEqual(pw.nextFloat(), sp.nextFloat());
   assert.throws(() => layout.createPositionStream(SEED, 1, 0.35, 'zz'), RangeError);
   assert.throws(() => layout.createPositionStream(SEED, 1, 0.35, 'fff'), RangeError);

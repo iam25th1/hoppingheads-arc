@@ -20,10 +20,13 @@
  *                            anything that only needs an unguessable stream.
  *   createRngFromHex(hex)    hex is 0x plus 64 hex digits (256 bits). All
  *                            256 bits reach the state: the 128 bit xoshiro
- *                            state is the XOR fold of the two 128 bit halves.
- *                            Use this for anything that gets committed to,
- *                            because a 32 bit seed space is a weekend of
- *                            brute force and this one is not.
+ *                            state is the XOR fold of the two 128 bit halves,
+ *                            then WARMUP steps are discarded so a seed that
+ *                            differs in one byte (a stream tag, a bot slot)
+ *                            diverges from its first draw. Use this for
+ *                            anything that gets committed to, because a 32
+ *                            bit seed space is a weekend of brute force and
+ *                            this one is not.
  *
  * Reference: Blackman and Vigna, "Scrambled Linear Pseudorandom Number
  * Generators" (2021).
@@ -122,8 +125,18 @@
     return generator(s);
   }
 
+  // xoshiro128** mixes a difference across its state slowly: the first output
+  // depends on s[1] alone, and a seed that differs only in its last byte
+  // changes only s[3]. Every derived stream (bot slots, powerups, spawns)
+  // replaces that byte, so without this they all opened with the same two
+  // draws as the raw seed's stream. Sixteen discarded steps carry any
+  // difference through every word before the first draw is handed out.
+  const WARMUP = 16;
+
   function createRngFromHex(hex) {
-    return generator(stateFromHex(hex));
+    const g = generator(stateFromHex(hex));
+    for (let i = 0; i < WARMUP; i++) g.nextUint32();
+    return g;
   }
 
   return { seedFrom: seedFrom, isHexSeed: isHexSeed, createRng: createRng, createRngFromHex: createRngFromHex };
