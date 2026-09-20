@@ -10,9 +10,9 @@ import { issueRound } from "../game/rounds.js";
 import { createFragState, MINT_LIMIT, MINT_DURATIONS, MINT_GRACE_MS } from "../game/lobbyFrags.js";
 import { collectFragment, completeMint, hasMintableChest } from "../game/lobbyActions.js";
 import { lobbyModeFor, rulesFor } from "../game/modes.js";
-import { grantKnockback, judgeMove, BASE_SPEED, BOOST_SPEED } from "../game/movement.js";
+import { grantKnockback, judgeMove, growCap, BASE_SPEED, BOOST_SPEED } from "../game/movement.js";
 import { createSeat, fillWithBots, countSeats, BOT_FILL_TO, DEFAULT_SKINS } from "../game/bots.js";
-import { createBotBrain, stepBot, BOT_SPEED } from "../game/botDriver.js";
+import { createBotBrain, stepBot, botSpeed } from "../game/botDriver.js";
 import { createSpawns } from "../game/spawns.js";
 import { createPowerupState, spawnIfDue, expire, pickups, hasEffect } from "../game/powerups.js";
 import { isBotId, isHumanId, guestId } from "../game/ids.js";
@@ -101,8 +101,7 @@ function applyMove(p, nx, nz, ry, moving, now) {
   // server's own powerup record says this seat is boosted. Grow slows a
   // player (mirrors client GROW_PER_FRAG and SPEED_PENALTY_MAX).
   const cap = hasEffect(p, 'speed', now) ? BOOST_SPEED : BASE_SPEED;
-  const growFactor = Math.min(1, (p.fragCount * 0.022) / 1.2);
-  const adjustedMaxSpeed = cap * (1 - growFactor * 0.45);
+  const adjustedMaxSpeed = growCap(cap, p.fragCount);
   const judged = judgeMove(p.move, nx, nz, now, adjustedMaxSpeed);
   if (judged.flagged) {
     p.violations.move++;
@@ -166,8 +165,11 @@ function driveBots(io, lobby, now) {
   const emit = lobbyEmit(io, lobby);
   for (const p of lobby.players.values()) {
     if (!p.isBot || !p.brain) continue;
-    // A bot the server knows is boosted runs at the boosted speed, like a human would
-    const speed = hasEffect(p, 'speed', now) ? BOT_SPEED * 2 : BOT_SPEED;
+    // A bot runs at its own pace under the cap the judge will hold it to: the same cap a
+    // human gets, boosted while the server's powerup record says so, and shrinking as the
+    // seat grows. Before this the driver ran a flat 14 and a grown bot was clamped every tick.
+    const boosted = hasEffect(p, 'speed', now);
+    const speed = botSpeed(growCap(boosted ? BOOST_SPEED : BASE_SPEED, p.fragCount), boosted);
     const r = stepBot(p.brain, p, world, speed, dt);
     applyMove(p, r.nx, r.nz, r.ry, r.moving, now);
     // Same path as frag:collected. The judge may have clamped the bot short

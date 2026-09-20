@@ -51,6 +51,16 @@ export const MIN_STEP_MS = 16;
 // about ten updates a window). It does not grow with update rate.
 export const WINDOW_TOLERANCE = 0.5;
 
+/**
+ * The cap after growth. A seat carrying fragments moves slower (the client's
+ * GROW_PER_FRAG and SPEED_PENALTY_MAX): fragCount times 0.022 over the 1.2
+ * of growth range, at most 1, takes up to 45 percent off the cap.
+ */
+export function growCap(cap, fragCount) {
+  const growFactor = Math.min(1, ((fragCount || 0) * 0.022) / 1.2);
+  return cap * (1 - growFactor * 0.45);
+}
+
 export function createMoveState(x = 0, z = 0) {
   return { x, z, lastAt: 0, samples: [], knockback: null };
 }
