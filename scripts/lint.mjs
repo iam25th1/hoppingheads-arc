@@ -136,7 +136,7 @@ totalErrors += await runEslint({
     },
     rules: bugRules,
   },
-  files: ['server/src/**/*.js', 'shared/**/*.cjs', 'contracts/cli/**/*.mjs'],
+  files: ['server/src/**/*.js', 'shared/**/*.cjs', 'contracts/cli/**/*.mjs', 'services/*/*.js'],
 });
 
 // Extracted HTML inline scripts (browser, script mode)
