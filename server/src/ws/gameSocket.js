@@ -18,6 +18,7 @@ import { createPowerupState, spawnIfDue, expire, pickups, hasEffect } from "../g
 import { isBotId, isHumanId, guestId } from "../game/ids.js";
 import { chainConfig, chainEnabled, entered as chainEntered, waitForEntry, entryAmount as chainEntryAmount, usd } from "../chain/escrow.js";
 import { departedSnapshot, rankSeats } from "../game/settlementRoster.js";
+import { seatOnRejoin, seatOnLeave, liveHumans, awayStaked, GRACE_MS } from "../game/seats.js";
 
 const require = createRequire(import.meta.url);
 const layoutModule = require("../../../shared/layout.cjs");
@@ -90,6 +91,7 @@ function createLobby(mode) {
     // worker has done with it (chainStatus mirrors rounds.chain_status), the poll that
     // watches for the open, and the humans who left mid round with their score frozen.
     onchainRoundId:null, seedCommit:null, chainStatus:null, chainWatch:null, departed:[],
+    graceTimer:null, countdownCount:null,
   };
   lobbies.set(id, lobby);
   return lobby;
@@ -102,7 +104,78 @@ function clearLobbyTimers(lobby) {
   if (lobby.countdownInterval) clearInterval(lobby.countdownInterval);
   if (lobby.autoStartTimer) clearTimeout(lobby.autoStartTimer);
   if (lobby.chainWatch) clearInterval(lobby.chainWatch);
-  lobby.waitTickInterval = lobby.tickInterval = lobby.countdownInterval = lobby.autoStartTimer = lobby.chainWatch = null;
+  if (lobby.graceTimer) clearTimeout(lobby.graceTimer);
+  lobby.waitTickInterval = lobby.tickInterval = lobby.countdownInterval = lobby.autoStartTimer = lobby.chainWatch = lobby.graceTimer = null;
+}
+
+const socketAlive = (io) => (id) => { const s = io.sockets.sockets.get(id); return !!(s && s.connected); };
+
+/** Close a lobby that never started: timers off, row abandoned, gone from the map. */
+function abandonLobby(io, lobby, why) {
+  clearLobbyTimers(lobby);
+  lobbies.delete(lobby.id);
+  const away = awayStaked(lobby.players);
+  if (away.length) console.error(`[MP] ALERT lobby ${lobby.id} abandoned with staked seats that never came back (${why}): ${away.join(', ')}. Their stakes stay in the pool; there is no refund path in the contract.`);
+  else console.log(`[MP] lobby ${lobby.id} abandoned (${why})`);
+  if (lobby.roundId && lobby.status !== 'ended') {
+    query(`UPDATE rounds SET status = 'abandoned', end_time = NOW() WHERE id = $1 AND status <> 'completed'`, [lobby.roundId])
+      .catch((e) => console.error('[MP] abandon error:', e.message));
+  }
+}
+
+/**
+ * A socket has left its seat. What happens to the seat depends on where the
+ * round is and whether money is on it (seats.js): a live round freezes the
+ * seat with its score, a staked seat before the round waits for its player,
+ * anything else is dropped. Then the lobby: no human left means the round
+ * ends (live and staked), or the lobby waits out the grace period (staked
+ * seats away), or it is abandoned.
+ */
+function leaveSeat(io, lobby, playerId) {
+  const seat = lobby.players.get(playerId);
+  if (!seat) return;
+  const outcome = seatOnLeave({ status: lobby.status, staked: seat.staked === true });
+  if (outcome === 'depart') {
+    if (!seat.isBot) lobby.departed.push(departedSnapshot(seat));
+    lobby.players.delete(playerId);
+    io.to(`lobby:${lobby.id}`).emit('player:left', { id: playerId, count: lobby.players.size });
+  } else if (outcome === 'keep') {
+    seat.socketId = null;
+    seat.awaySince = Date.now();
+    io.to(`lobby:${lobby.id}`).emit('player:away', { id: playerId, count: lobby.players.size });
+    console.log(`[MP] ${seat.name} left lobby ${lobby.id} with a stake on the seat; the seat waits ${GRACE_MS / 1000}s for them`);
+  } else {
+    lobby.players.delete(playerId);
+    io.to(`lobby:${lobby.id}`).emit('player:left', { id: playerId, count: lobby.players.size });
+  }
+
+  if (lobby.players.size < MIN_PLAYERS && lobby.autoStartTimer && lobby.status === 'waiting') {
+    clearTimeout(lobby.autoStartTimer);
+    lobby.autoStartTimer = null;
+    io.to(`lobby:${lobby.id}`).emit('auto:cancelled');
+  }
+
+  if (liveHumans(lobby.players, socketAlive(io)) > 0) return;
+  // No human on a live socket. Bots never leave on their own, so a size check alone
+  // would keep a bot only round running to the end.
+  if (lobby.rules.stakeable && lobby.status === 'active') {
+    // A live staked round ends now, with the departed seats in the results, so the
+    // settlement worker settles it.
+    clearLobbyTimers(lobby);
+    endRound(io, lobby);
+    return;
+  }
+  if (awayStaked(lobby.players).length && !lobby.graceTimer && lobby.status !== 'active') {
+    // Money is on the table and nobody is here: wait, then give up.
+    lobby.graceTimer = setTimeout(() => {
+      lobby.graceTimer = null;
+      if (!lobbies.has(lobby.id) || lobby.status === 'active' || lobby.status === 'ended') return;
+      if (liveHumans(lobby.players, socketAlive(io)) === 0) abandonLobby(io, lobby, 'grace period over');
+    }, GRACE_MS);
+    return;
+  }
+  if (lobby.status === 'ended') return;
+  abandonLobby(io, lobby, 'no human left');
 }
 
 const stakedCount = (lobby) => Array.from(lobby.players.values()).filter((p) => !p.isBot && p.staked).length;
@@ -312,12 +385,56 @@ export function initGameSocket(io) {
         return;
       }
       if (address) {
-        // One seat per address across live lobbies
+        // One seat per address across live lobbies, and the newest connection holds it
+        // (seats.js): a reload, a closed tab, a second tab or a dropped network all put
+        // the player back in their seat. A live round being played on another
+        // connection is the one case refused.
         for (const l of lobbies.values()) {
-          if (l.status !== 'ended' && l.players.has(address)) {
-            socket.emit('auth:denied', { reason: 'This wallet is already in a lobby.' });
+          const seat = l.players.get(address);
+          if (!seat) continue;
+          const old = seat.socketId ? io.sockets.sockets.get(seat.socketId) : null;
+          const alive = !!(old && old.connected && old.id !== socket.id);
+          const decision = seatOnRejoin({ status: l.status, alive });
+          if (decision === 'new') continue;
+          if (decision === 'refuse') {
+            console.log(`[MP] ${shortAddress(address)} refused: playing lobby ${l.id} on another connection`);
+            socket.emit('auth:denied', { reason: 'This wallet is playing a round in another tab.' });
             return;
           }
+          if (decision === 'release') {
+            console.log(`[MP] ${shortAddress(address)} left lobby ${l.id} mid round on a dead connection; the seat departs`);
+            leaveSeat(io, l, address);
+            continue;
+          }
+          // reclaim: attach the seat to this socket first, then kick a live older one,
+          // whose disconnect handler then finds the seat is no longer its own.
+          verifiedUser = address;
+          hasJoined = true;
+          playerId = address;
+          currentLobby = l;
+          seat.socketId = socket.id;
+          seat.awaySince = null;
+          if (l.graceTimer) { clearTimeout(l.graceTimer); l.graceTimer = null; }
+          socket.join(`lobby:${l.id}`);
+          if (alive) {
+            old.emit('auth:denied', { reason: 'You entered the Arena from another tab. This one is out.' });
+            old.disconnect(true);
+          }
+          socket.emit('joined', {
+            playerId, lobbyId: l.id, mode: l.mode, mapIndex: l.mapIndex,
+            appearance: seat.appearance, cosmeticExtras: seat.cosmeticExtras, reclaimed: true,
+            players: Array.from(l.players.values()).map(p => ({ id:p.id, name:p.name, appearance:p.appearance, extras:p.cosmeticExtras })),
+          });
+          io.to(`lobby:${l.id}`).emit('player:back', { id: playerId, count: l.players.size });
+          console.log(`[MP] ${shortAddress(address)} back in lobby ${l.id} (${alive ? 'newer tab wins' : 'reconnected'})${seat.staked ? ', stake intact' : ''}`);
+          if (l.rules.stakeable) {
+            socket.emit('stake:info', await stakeInfo(l));
+            if (seat.staked) socket.emit('stake:confirmed', { roundId: l.onchainRoundId });
+            if (l.status === 'waiting' && l.waitStartedAt) socket.emit('auto:starting', { seconds: Math.max(0, waitSecondsFor(l) - Math.floor((Date.now() - l.waitStartedAt) / 1000)) });
+          }
+          // A reclaim during the countdown replays the count so the client builds its map.
+          if (l.status === 'countdown' && l.countdownCount !== null) socket.emit('countdown', { count: l.countdownCount });
+          return;
         }
       }
       verifiedUser = address;
@@ -504,38 +621,11 @@ export function initGameSocket(io) {
 
     socket.on('disconnect', () => {
       if (!currentLobby || !playerId) return;
-      // A human leaving a live round keeps their place by the score they had: their
-      // stake settles like anyone else's. Nothing is refunded and nothing is invented.
+      // Only the socket that holds the seat acts on leaving it. A newer connection may
+      // have reclaimed the seat already; then this one is just an old tab going away.
       const seat = currentLobby.players.get(playerId);
-      if (seat && !seat.isBot && currentLobby.status === 'active') currentLobby.departed.push(departedSnapshot(seat));
-      currentLobby.players.delete(playerId);
-      io.to(`lobby:${currentLobby.id}`).emit('player:left', { id:playerId, count:currentLobby.players.size });
-
-      if (currentLobby.players.size < MIN_PLAYERS && currentLobby.autoStartTimer && currentLobby.status === 'waiting') {
-        clearTimeout(currentLobby.autoStartTimer);
-        currentLobby.autoStartTimer = null;
-        io.to(`lobby:${currentLobby.id}`).emit('auto:cancelled');
-      }
-
-      // No humans left: tear the lobby down. Bots never leave on their own,
-      // so a size check alone would keep a bot only round running to the end.
-      if (countSeats(currentLobby.players).humans === 0) {
-        // A live stakeable round with stakes in it ends now, with the departed seats
-        // in the results, so the settlement worker settles it. Anything else is torn
-        // down and its row closed as abandoned, so it never counts as completed in the
-        // score distribution or sits as active forever.
-        if (currentLobby.rules.stakeable && currentLobby.status === 'active') {
-          clearLobbyTimers(currentLobby);
-          endRound(io, currentLobby);
-          return;
-        }
-        clearLobbyTimers(currentLobby); // or an empty lobby counts down and plays alone
-        lobbies.delete(currentLobby.id);
-        if (currentLobby.roundId && currentLobby.status !== 'ended') {
-          query(`UPDATE rounds SET status = 'abandoned', end_time = NOW() WHERE id = $1 AND status <> 'completed'`, [currentLobby.roundId])
-            .catch((e) => console.error('[MP] abandon error:', e.message));
-        }
-      }
+      if (seat && seat.socketId !== socket.id) return;
+      leaveSeat(io, currentLobby, playerId);
     });
   });
 
@@ -572,9 +662,7 @@ async function beginCountdown(io, lobby) {
     if (countSeats(lobby.players).humans === 0) {
       // Nobody staked: no round. The row closes as abandoned; the worker still settles
       // the opened round with no placements so the escrow's record is closed too.
-      clearLobbyTimers(lobby);
-      lobbies.delete(lobby.id);
-      if (lobby.roundId) query(`UPDATE rounds SET status = 'abandoned', end_time = NOW() WHERE id = $1`, [lobby.roundId]).catch((e) => console.error('[MP] abandon error:', e.message));
+      abandonLobby(io, lobby, 'nobody staked by countdown');
       return;
     }
   }
@@ -587,9 +675,11 @@ async function beginCountdown(io, lobby) {
     console.log(`[MP] Lobby ${lobby.id} filled with ${c.bots} bot(s) alongside ${c.humans} human(s)`);
   }
   let count = 3;
+  lobby.countdownCount = count;
   io.to(`lobby:${lobby.id}`).emit('countdown', { count });
   lobby.countdownInterval = setInterval(() => {
     count--;
+    lobby.countdownCount = count;
     if (count > 0) {
       io.to(`lobby:${lobby.id}`).emit('countdown', { count });
     } else {
