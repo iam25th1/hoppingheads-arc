@@ -106,7 +106,7 @@ const threeGlobals = {
   SpriteMaterial: 'readonly', Sprite: 'readonly',
   MathUtils: 'readonly', CatmullRomCurve3: 'readonly', TubeGeometry: 'readonly',
   io: 'readonly', Chart: 'readonly',
-  HHPrng: 'readonly', HHMapObstacles: 'readonly', HHLayout: 'readonly',
+  HHPrng: 'readonly', HHMapObstacles: 'readonly', HHLayout: 'readonly', HHEscrow: 'readonly',
 };
 
 // -------- Run ESLint via Node.js API -----------------------------------

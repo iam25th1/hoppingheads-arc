@@ -84,6 +84,12 @@ body{background:#0f0a1a;overflow:hidden;font-family:'Silkscreen',monospace}
 /* X Connect bar */
 .wallet-bar{color:#ffd54f!important;border:1.5px solid rgba(255,213,79,0.3);margin-bottom:clamp(6px,1vh,12px);padding:clamp(6px,1vh,10px) clamp(12px,2vw,20px);text-align:center;animation:xPulse 2.5s ease-in-out infinite;font-size:clamp(9px,1.4vw,12px)!important;letter-spacing:1px}
 .wallet-bar.connected{color:#5cc06a!important;border-color:rgba(92,192,106,0.3);animation:none}
+.stake-btn{color:#5cc06a!important;border:1.5px solid rgba(92,192,106,0.35);text-align:center;margin:clamp(4px,0.8vh,10px) 0}
+.stake-btn.busy{color:#8a80b0!important;border-color:rgba(138,128,176,0.35);pointer-events:none}
+.stake-btn.done{color:#5cc06a!important;border-color:rgba(92,192,106,0.7);pointer-events:none}
+.stake-btn.fail{color:#ff6b6b!important;border-color:rgba(255,107,107,0.45)}
+.stake-btn.off{color:#5a5478!important;border-color:rgba(90,84,120,0.3);pointer-events:none}
+#stake-status a,#claim-status a{color:#ffd54f;text-decoration:underline}
 @keyframes xPulse{0%,100%{border-color:rgba(29,161,242,0.15);text-shadow:none}50%{border-color:rgba(29,161,242,0.5);text-shadow:0 0 10px rgba(29,161,242,0.25)}}
 /* Leaderboard */
 .lb-list{font-family:'Silkscreen',monospace;font-size:clamp(8px,1vw,11px);text-align:left;max-height:clamp(100px,20vh,200px);overflow-y:auto;margin:clamp(4px,0.8vh,10px) 0;scrollbar-width:thin;scrollbar-color:#4d4080 transparent}
@@ -384,6 +390,7 @@ body.in-menu .mob-util-btn{display:none}
       <div id="wallet-bar" class="menu-item wallet-bar" data-action="connect-wallet"><span id="wallet-status">CONNECT WALLET FOR THE ARENA</span></div>
       <div class="menu-item" data-action="quickplay-menu">QUICK PLAY</div>
       <div class="menu-item" data-action="arena">ARENA</div>
+      <div class="menu-item" data-action="claim">CLAIM</div>
       <div class="menu-item" data-action="tutorial">TUTORIAL</div>
       <div class="menu-item menu-skin" data-action="cycle-skin">SKIN: <span id="skin-name">CORAL</span></div>
       <div class="menu-item" data-action="leaderboard">LEADERBOARD</div>
@@ -403,6 +410,20 @@ body.in-menu .mob-util-btn{display:none}
       <div id="lobby-map" class="menu-map"></div>
       <div id="lobby-count" class="menu-status"></div>
       <div id="lobby-status" class="menu-sub"></div>
+      <div id="stake-row" style="display:none">
+        <div id="stake-price" class="menu-status"></div>
+        <div id="stake-btn" class="menu-item stake-btn" data-action="stake">STAKE</div>
+        <div id="stake-status" class="menu-sub"></div>
+      </div>
+      <div class="menu-item" data-action="back">BACK</div>
+    </div>
+
+    <!-- CLAIM: what the escrow owes this wallet, pulled by the wallet itself -->
+    <div id="menu-claim" class="menu-page" style="display:none">
+      <div class="menu-label">CLAIM</div>
+      <div id="claim-amount" class="menu-status">READING...</div>
+      <div id="claim-btn" class="menu-item stake-btn" data-action="claim-withdraw">CLAIM</div>
+      <div id="claim-status" class="menu-sub"></div>
       <div class="menu-item" data-action="back">BACK</div>
     </div>
 
@@ -542,6 +563,7 @@ body.in-menu .mob-util-btn{display:none}
     <div class="end-stat-row"><span class="end-stat-key" id="end-minted-lbl">HEADS MINTED</span><span class="end-stat-val" id="end-minted">0</span></div>
     <div class="end-stat-row"><span class="end-stat-key" id="end-frags-lbl">FRAGMENTS</span><span class="end-stat-val" id="end-frags">0</span></div>
     <div class="end-stat-row"><span class="end-stat-key">MAP</span><span class="end-stat-val" id="end-map">-</span></div>
+    <div class="end-stat-row" id="end-payout-row" style="display:none"><span class="end-stat-key">PAYOUT</span><span class="end-stat-val" id="end-payout">-</span></div>
   </div>
   <div style="display:flex;gap:clamp(16px,3vw,30px);justify-content:center;align-items:center;margin-top:clamp(20px,4vh,40px)">
     <div class="end-restart" id="end-share" style="margin:0;animation:none;color:#8a5acc">SHARE</div>
@@ -555,6 +577,7 @@ body.in-menu .mob-util-btn{display:none}
 <script src="/game/lib/prng.js"></script>
 <script src="/game/lib/mapObstacles.js"></script>
 <script src="/game/lib/layout.js"></script>
+<script src="/game/lib/escrowAbi.js"></script>
 <script>
 const{Scene,PerspectiveCamera,WebGLRenderer,Color,FogExp2,AmbientLight,DirectionalLight,HemisphereLight,PointLight,
 BoxGeometry,SphereGeometry,CylinderGeometry,PlaneGeometry,ConeGeometry,DodecahedronGeometry,IcosahedronGeometry,OctahedronGeometry,TorusGeometry,CircleGeometry,
@@ -4112,6 +4135,7 @@ function exitToMenu(){
   if(gameTimerInterval){clearInterval(gameTimerInterval);gameTimerInterval=null}
   // Disconnect multiplayer
   if(socket&&mpConnected){socket.disconnect();socket=null;mpConnected=false}
+  resetStakeUi();if(payoutPoll){clearInterval(payoutPoll);payoutPoll=null}
   // Clean up remote players
   for(const[id,rp]of remotePlayers)scene.remove(rp.mesh);remotePlayers.clear();
   // Clean up powerups
@@ -4801,10 +4825,10 @@ function updateWalletBar(){
   else{st.textContent='CONNECT WALLET FOR THE ARENA';bar.classList.remove('connected')}
 }
 // Arena without a wallet: say so on the wallet bar for a moment. Quick Play needs none.
-function showArenaHint(){
+function showArenaHint(message,ms){
   const st=document.getElementById('wallet-status');if(!st)return;
-  const prev=st.textContent,msg='CONNECT A WALLET TO ENTER THE ARENA';st.textContent=msg;
-  setTimeout(()=>{if(st.textContent===msg)st.textContent=prev},2500);
+  const prev=st.textContent,msg=(message||'CONNECT A WALLET TO ENTER THE ARENA').toUpperCase();st.textContent=msg;
+  setTimeout(()=>{if(st.textContent===msg)st.textContent=prev},ms||2500);
 }
 async function verifyWalletSession(){
   if(!walletSession)return;
@@ -5194,6 +5218,13 @@ document.querySelectorAll('.menu-item').forEach(item=>{
       startGame();
     }else if(action==='settings'){
       showMenuPage('settings');
+    }else if(action==='stake'){
+      stakeEntry();
+    }else if(action==='claim'){
+      if(!walletUser){showArenaHint();return}
+      openClaim();
+    }else if(action==='claim-withdraw'){
+      claimWithdraw();
     }else if(action==='leaderboard'){
       showMenuPage('leaderboard');
       fetchLeaderboard();
@@ -5972,6 +6003,166 @@ let remotePlayers=new Map();
 let remoteExtras=new Map(); // Cache cosmetic extras per player ID
 const MP_SEND_RATE=100;let lastPosSend=0;
 
+// ======= CHAIN: STAKE AND CLAIM (Arena only; Quick Play never comes here) =======
+// The server tells us the round, the escrow and the price (stake:info / stake:open) and reads
+// the chain to confirm a stake; the wallet signs and sends. Every transaction we ask the
+// wallet to send carries maxFeePerGas explicitly, never under Arc's 20 gwei floor. Every
+// state a player can be in is written on screen: waiting for the wallet, pending with a
+// link, failed with a reason, confirmed, settled but not yet claimed.
+let chainInfo=null; // from /api/chain or stake:info: chainId, escrow, usdc, permit2, explorer, rpcUrl, entryAmount, entryUsd
+const stakeState={roundId:null,open:false,staked:false,busy:false};
+const hexQty=(n)=>'0x'+BigInt(n).toString(16);
+const shortHash=(h)=>h.slice(0,8)+'..'+h.slice(-4);
+function txLink(hash){return chainInfo&&chainInfo.explorer?'<a href="'+chainInfo.explorer+'/tx/'+hash+'" target="_blank" rel="noopener">'+shortHash(hash)+'</a>':shortHash(hash)}
+function setStake(text,cls,statusHtml){const b=document.getElementById('stake-btn'),st=document.getElementById('stake-status');if(b){b.textContent=text;b.className='menu-item stake-btn'+(cls?' '+cls:'')}if(st&&statusHtml!==undefined)st.innerHTML=statusHtml}
+function setClaim(text,cls,statusHtml){const b=document.getElementById('claim-btn'),st=document.getElementById('claim-status');if(b){b.textContent=text;b.className='menu-item stake-btn'+(cls?' '+cls:'')}if(st&&statusHtml!==undefined)st.innerHTML=statusHtml}
+function walletRequest(method,params){if(!window.ethereum)throw new Error('No wallet found');return window.ethereum.request({method,params:params||[]})}
+async function ensureArcChain(){
+  const want=hexQty(chainInfo.chainId);
+  const have=await walletRequest('eth_chainId');
+  if(have&&have.toLowerCase()===want.toLowerCase())return;
+  try{await walletRequest('wallet_switchEthereumChain',[{chainId:want}])}
+  catch(e){
+    if(e&&(e.code===4902||/unrecognized|not added/i.test(e.message||''))){
+      await walletRequest('wallet_addEthereumChain',[{chainId:want,chainName:chainInfo.chainId===5042?'Arc':'Arc Testnet',rpcUrls:[chainInfo.rpcUrl],nativeCurrency:{name:'USDC',symbol:'USDC',decimals:18},blockExplorerUrls:[chainInfo.explorer]}]);
+    }else throw e;
+  }
+}
+async function walletAccount(){
+  const accounts=await walletRequest('eth_requestAccounts');
+  const a=accounts&&accounts[0];
+  if(!a)throw new Error('No account in the wallet');
+  if(!walletUser||a.toLowerCase()!==walletUser.address.toLowerCase())throw new Error('The wallet account differs from the signed in one ('+shortAddr(a)+')');
+  return a;
+}
+const ethCall=(to,data)=>walletRequest('eth_call',[{to,data},'latest']);
+async function sendTx(from,to,data,onPending){
+  // 30 gwei cap, 1 gwei tip: over Arc's floor with room; the wallet may raise it, never lower.
+  const hash=await walletRequest('eth_sendTransaction',[{from,to,data,maxFeePerGas:hexQty(30000000000n),maxPriorityFeePerGas:hexQty(1000000000n)}]);
+  if(onPending)onPending(hash);
+  const until=Date.now()+180000;
+  for(;;){
+    const r=await walletRequest('eth_getTransactionReceipt',[hash]).catch(()=>null);
+    if(r){if(r.status==='0x1'||r.status===1||r.status===true)return hash;throw new Error('Transaction reverted ('+shortHash(hash)+')')}
+    if(Date.now()>until)throw new Error('No receipt after 3 minutes for '+shortHash(hash)+'. Check the explorer before trying again.');
+    await new Promise(r=>setTimeout(r,2000));
+  }
+}
+function walletErrorText(e){
+  if(e&&(e.code===4001||/rejected|denied/i.test(e.message||'')))return 'CANCELLED IN WALLET';
+  return String((e&&(e.shortMessage||e.message))||e).replace(/\s+/g,' ').slice(0,90).toUpperCase();
+}
+async function stakeEntry(){
+  if(stakeState.busy||stakeState.staked||!stakeState.open||!chainInfo)return;
+  stakeState.busy=true;
+  const esc=chainInfo.escrow,entry=BigInt(chainInfo.entryAmount);
+  try{
+    setStake('CONFIRM IN WALLET','busy','');
+    await ensureArcChain();
+    const from=await walletAccount();
+    let hash=null;
+    // One signature after a one time approval of Permit2. If the wallet cannot sign typed
+    // data, the plain approve and enter path does the same in two transactions.
+    let permitSig=null,nonce=null,deadline=null;
+    try{
+      const allowance=HHEscrow.decodeUint(await ethCall(chainInfo.usdc,HHEscrow.encodeAllowance(from,chainInfo.permit2)));
+      if(allowance<entry){
+        setStake('APPROVING PERMIT2 (ONCE)','busy','CONFIRM THE ONE TIME APPROVAL IN YOUR WALLET');
+        await sendTx(from,chainInfo.usdc,HHEscrow.encodeApprove(chainInfo.permit2,HHEscrow.MAX_UINT256),(h)=>setStake('APPROVING PERMIT2 (ONCE)','busy','TX PENDING '+txLink(h)));
+      }
+      const rnd=new Uint8Array(31);crypto.getRandomValues(rnd);
+      nonce=HHEscrow.permit2Nonce(rnd);deadline=String(Math.floor(Date.now()/1000)+3600);
+      const td=HHEscrow.permit2TypedData({chainId:chainInfo.chainId,permit2:chainInfo.permit2,token:chainInfo.usdc,amount:entry.toString(),spender:esc,nonce,deadline});
+      setStake('SIGN IN WALLET','busy','ONE SIGNATURE FOR '+chainInfo.entryUsd+', NO GAS FOR THE SIGNATURE');
+      permitSig=await walletRequest('eth_signTypedData_v4',[from,JSON.stringify(td)]);
+    }catch(e){
+      if(e&&(e.code===4001||/rejected|denied/i.test(e.message||'')))throw e;
+      console.warn('[Stake] Permit2 path unavailable, using approve and enter:',e&&e.message);
+      permitSig=null;
+    }
+    if(permitSig){
+      setStake('STAKING '+chainInfo.entryUsd,'busy','CONFIRM THE ENTRY IN YOUR WALLET');
+      hash=await sendTx(from,esc,HHEscrow.encodeEnterWithPermit2(stakeState.roundId,nonce,deadline,permitSig),(h)=>setStake('STAKING '+chainInfo.entryUsd,'busy','TX PENDING '+txLink(h)));
+    }else{
+      const allowance=HHEscrow.decodeUint(await ethCall(chainInfo.usdc,HHEscrow.encodeAllowance(from,esc)));
+      if(allowance<entry){
+        setStake('APPROVING '+chainInfo.entryUsd,'busy','CONFIRM THE APPROVAL IN YOUR WALLET');
+        await sendTx(from,chainInfo.usdc,HHEscrow.encodeApprove(esc,entry),(h)=>setStake('APPROVING '+chainInfo.entryUsd,'busy','TX PENDING '+txLink(h)));
+      }
+      setStake('STAKING '+chainInfo.entryUsd,'busy','CONFIRM THE ENTRY IN YOUR WALLET');
+      hash=await sendTx(from,esc,HHEscrow.encodeEnter(stakeState.roundId),(h)=>setStake('STAKING '+chainInfo.entryUsd,'busy','TX PENDING '+txLink(h)));
+    }
+    setStake('CONFIRMING ON CHAIN','busy','MINED '+txLink(hash)+' . THE SERVER IS CHECKING THE CHAIN');
+    if(socket&&mpConnected)socket.emit('stake:submitted',{txHash:hash});
+    else throw new Error('Lost the lobby while staking. Your entry '+shortHash(hash)+' is on chain; rejoin and it will be recognised.');
+  }catch(e){
+    stakeState.busy=false;
+    setStake('RETRY STAKE '+(chainInfo?chainInfo.entryUsd:''),'fail','STAKE FAILED: '+walletErrorText(e));
+  }
+}
+function resetStakeUi(){
+  stakeState.roundId=null;stakeState.open=false;stakeState.staked=false;stakeState.busy=false;
+  const row=document.getElementById('stake-row');if(row)row.style.display='none';
+  setStake('STAKE','off','');
+}
+async function openClaim(){
+  showMenuPage('claim');
+  const amt=document.getElementById('claim-amount');
+  setClaim('CLAIM','off','');
+  if(!walletUser){amt.textContent='CONNECT A WALLET FIRST';return}
+  amt.textContent='READING...';
+  try{
+    if(!chainInfo){const c=await (await fetch('/api/chain')).json();if(!c.enabled)throw new Error('Arena offline');chainInfo=c}
+    const r=await (await fetch('/api/chain/claimable/'+walletUser.address)).json();
+    if(!r.usd)throw new Error(r.error||'read failed');
+    const units=BigInt(r.claimable);
+    amt.textContent='CLAIMABLE '+r.usd;
+    if(units>0n)setClaim('CLAIM '+r.usd,'','PULLS '+r.usd+' TO YOUR WALLET');
+    else setClaim('NOTHING TO CLAIM','off','');
+  }catch(e){amt.textContent='COULD NOT READ THE ESCROW';setClaim('RETRY','fail',walletErrorText(e))}
+}
+async function claimWithdraw(){
+  const btn=document.getElementById('claim-btn');if(!btn||btn.classList.contains('busy')||btn.classList.contains('off'))return;
+  if(btn.textContent==='RETRY'){openClaim();return}
+  try{
+    setClaim('CONFIRM IN WALLET','busy','');
+    await ensureArcChain();
+    const from=await walletAccount();
+    const hash=await sendTx(from,chainInfo.escrow,HHEscrow.encodeWithdraw(),(h)=>setClaim('CLAIMING','busy','TX PENDING '+txLink(h)));
+    const r=await (await fetch('/api/chain/claimable/'+walletUser.address)).json();
+    document.getElementById('claim-amount').textContent='CLAIMABLE '+(r.usd||'$0.00');
+    setClaim('CLAIMED','done','IN YOUR WALLET. '+txLink(hash));
+  }catch(e){setClaim('RETRY CLAIM','fail','CLAIM FAILED: '+walletErrorText(e))}
+}
+// After a staked round: the settlement happens on chain a few seconds later. Say what is
+// known at every step, and never leave the line blank.
+let payoutPoll=null;
+function watchSettlement(roundId){
+  const row=document.getElementById('end-payout-row'),el=document.getElementById('end-payout');
+  if(!row||!el)return;
+  row.style.display='';el.textContent='SETTLING ON CHAIN...';
+  if(payoutPoll)clearInterval(payoutPoll);
+  const started=Date.now();
+  const look=async()=>{
+    try{
+      const r=await (await fetch('/api/chain/round/'+roundId)).json();
+      if(r.chainStatus==='settled'){
+        clearInterval(payoutPoll);payoutPoll=null;
+        const mine=(r.payouts||[]).find(p=>walletUser&&p.participant.toLowerCase()===walletUser.address.toLowerCase());
+        el.textContent=mine&&mine.usd&&BigInt(mine.payoutUnits||'0')>0n?mine.usd+' CLAIMABLE. CLAIM FROM THE MENU.':mine?'NO PAYOUT AT '+ordinal(mine.placement)+' PLACE':'NOT IN THE SETTLEMENT';
+      }else if(r.chainStatus==='dead'||r.chainStatus==='stalled'){
+        clearInterval(payoutPoll);payoutPoll=null;
+        el.textContent='SETTLEMENT DELAYED. YOUR STAKE IS RECORDED; CHECK CLAIM LATER.';
+      }else if(Date.now()-started>240000){
+        clearInterval(payoutPoll);payoutPoll=null;
+        el.textContent='STILL SETTLING. CHECK CLAIM FROM THE MENU LATER.';
+      }
+    }catch(e){/* keep polling */}
+  };
+  payoutPoll=setInterval(look,3000);look();
+}
+function ordinal(n){return n+(n===1?'ST':n===2?'ND':n===3?'RD':'TH')}
+
 function connectMultiplayer(){
   if(socket)return;
   let hasJoined=false;
@@ -5986,7 +6177,7 @@ function connectMultiplayer(){
     }
   });
   socket.on('auth:denied',(d)=>{
-    alert(d.reason||'Access denied');
+    showArenaHint(d.reason||'Access denied',4000);
     if(socket){socket.disconnect();socket=null;mpConnected=false}
     showMenuPage('main');
   });
@@ -6023,10 +6214,36 @@ function connectMultiplayer(){
     const s=document.getElementById('lobby-status');
     if(s)s.textContent=`MATCH STARTS IN ${d.seconds}s...`;
   });
+  socket.on('stake:info',(d)=>{
+    chainInfo=d;stakeState.roundId=d.roundId;stakeState.open=!!d.open;
+    const row=document.getElementById('stake-row');if(row)row.style.display='';
+    document.getElementById('stake-price').textContent='ENTRY '+(d.entryUsd||'...')+' USDC';
+    if(d.open)setStake('STAKE '+(d.entryUsd||''),'','ONE SIGNATURE. YOUR STAKE GOES TO THE ESCROW, NOT TO US.');
+    else setStake('OPENING THE ROUND','off','THE ROUND IS BEING OPENED ON CHAIN. A FEW SECONDS.');
+  });
+  socket.on('stake:open',(d)=>{
+    chainInfo=d;stakeState.roundId=d.roundId;stakeState.open=true;
+    if(!stakeState.staked&&!stakeState.busy)setStake('STAKE '+(d.entryUsd||''),'','ONE SIGNATURE. YOUR STAKE GOES TO THE ESCROW, NOT TO US.');
+  });
+  socket.on('stake:confirmed',()=>{
+    stakeState.staked=true;stakeState.busy=false;
+    setStake('STAKED '+(chainInfo?chainInfo.entryUsd:''),'done','YOUR SEAT IS PAID. THE ROUND STARTS WHEN THE TIMER ENDS.');
+  });
+  socket.on('stake:failed',(d)=>{
+    stakeState.busy=false;
+    setStake('RETRY STAKE '+(chainInfo?chainInfo.entryUsd:''),'fail','STAKE NOT CONFIRMED: '+String(d.reason||'').toUpperCase());
+  });
+  socket.on('stake:missing',()=>{
+    showArenaHint('The round started without you: stake before the countdown ends',5000);
+    exitToMenu();
+  });
+  socket.on('lobby:staked',(d)=>{
+    const c=document.getElementById('lobby-count');if(c&&typeof d.count==='number')c.dataset.staked=String(d.count);
+  });
   socket.on('lobby:wait',(d)=>{
     const countEl=document.getElementById('lobby-count');
     const statusEl=document.getElementById('lobby-status');
-    if(countEl)countEl.textContent=`PLAYERS: ${d.players}/${d.max}`;
+    if(countEl)countEl.textContent=`PLAYERS: ${d.players}/${d.max}`+(typeof d.staked==='number'?` . STAKED: ${d.staked}`:'');
     const m=Math.floor(d.seconds/60),sec=d.seconds%60;
     if(statusEl)statusEl.textContent=d.seconds>0?`STARTING IN ${m}:${sec<10?'0':''}${sec}`:'STARTING NOW...';
   });
@@ -6178,6 +6395,8 @@ function connectMultiplayer(){
       document.getElementById('end-score').textContent=score;
     }
 
+    if(d.settlement&&d.settlement.roundId)watchSettlement(d.settlement.roundId);
+    else{const pr=document.getElementById('end-payout-row');if(pr)pr.style.display='none'}
     document.getElementById('round-end').style.display='flex';
   });
   socket.on('disconnect',()=>{mpConnected=false;for(const [id,rp] of remotePlayers)scene.remove(rp.mesh);remotePlayers.clear();remoteExtras.clear()});

@@ -58,7 +58,7 @@ app.get('/privacy', (req, res) => {
 // scripts. Explicit content type because helmet sets nosniff and the files
 // are .cjs on disk.
 const SHARED_DIR = path.join(__dirname, "..", "..", "shared");
-for (const name of ["prng", "layout", "mapObstacles"]) {
+for (const name of ["prng", "layout", "mapObstacles", "escrowAbi"]) {
   app.get(`/game/lib/${name}.js`, (req, res) => {
     res.type("application/javascript").sendFile(path.join(SHARED_DIR, `${name}.cjs`));
   });
