@@ -10,6 +10,7 @@ import helmet from "helmet";
 import apiRoutes from "./routes/api.js";
 import { initDb } from "./db/pool.js";
 import { initGameSocket } from "./ws/gameSocket.js";
+import { initChain } from "./chain/escrow.js";
 import { walletAuthRoutes } from "./utils/walletAuth.js";
 
 import path from "path";
@@ -144,6 +145,8 @@ async function boot() {
   try {
     await initDb();
     console.log("[Boot] Database ready");
+    // The Arena's chain: asked of the RPC, accepted only if it is Arc (or a local node).
+    await initChain();
   } catch (err) {
     console.error("[Boot] Database init failed:", err.message);
     console.warn("[Boot] Continuing without database (dev mode)");

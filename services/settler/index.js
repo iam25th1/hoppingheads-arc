@@ -19,6 +19,13 @@ import { processRound } from "./settle.js";
 const cfg = loadConfig();
 const pool = new pg.Pool({ connectionString: cfg.databaseUrl });
 const db = (text, params) => pool.query(text, params);
+
+// One worker per database. Two workers would share one operator nonce stream and race on
+// the same rounds (one of them may even be pointed at another chain). The lock is held on a
+// dedicated connection for the life of the process and released by Postgres if it dies.
+const lockClient = await pool.connect();
+const lock = await lockClient.query("SELECT pg_try_advisory_lock(hashtext('hh-arc-settler')) AS ok");
+if (!lock.rows[0].ok) { console.error('[Settler] another settlement worker holds the lock on this database; refusing to start'); process.exit(1); }
 const chain = createChain(cfg);
 const sender = createSender({ rpc: chain.rpc, account: chain.account, chainId: cfg.chainId, deadlineMs: cfg.receiptDeadlineMs, maxAttempts: cfg.maxAttempts });
 const log = console;
