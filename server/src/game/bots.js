@@ -39,6 +39,7 @@ export function createSeat({ id, name, address, socketId, appearance, index, isB
     appearance, cosmeticExtras: {}, index,
     fragCount: 0, maxFrags: 48, shadow: 0,
     maxMints, boinkCd: 0,
+    staked: false, // phase 4: the chain said this address entered the round; never true on a bot
     mint: createMintState(),
     rejections: createRejections(),
     violations: { move: 0 },

@@ -5,10 +5,49 @@ import { isHumanId } from "../game/ids.js";
 import { issueRound } from "../game/rounds.js";
 import { SOLO_MODES } from "../game/modes.js";
 import { registerSoloRound, respawnSoloRound } from "../game/soloRounds.js";
+import { chainConfig, claimable as chainClaimable, entryAmount as chainEntryAmount, usd } from "../chain/escrow.js";
+import { isAddress, getAddress } from "ethers";
 
 const SOLO_MODE_SET = new Set(SOLO_MODES);
 
 const router = Router();
+
+// Phase 4: what the client needs to stake and to claim. Read only; this server holds no
+// key. Amounts go out in USDC units and as dollars; nothing here speaks gwei.
+router.get("/chain", async (req, res) => {
+  const cfg = chainConfig();
+  if (!cfg) return res.json({ enabled: false });
+  let entryAmount = null;
+  try { entryAmount = (await chainEntryAmount()).toString(); } catch (e) { console.warn(`[Chain] entryAmount: ${e.message}`); }
+  res.json({ enabled: true, ...cfg, entryAmount, entryUsd: entryAmount === null ? null : usd(entryAmount) });
+});
+
+router.get("/chain/claimable/:address", async (req, res) => {
+  if (!chainConfig()) return res.status(503).json({ error: "arena offline" });
+  if (!isAddress(req.params.address)) return res.status(400).json({ error: "bad address" });
+  try {
+    const v = await chainClaimable(getAddress(req.params.address));
+    res.json({ address: getAddress(req.params.address), claimable: v.toString(), usd: usd(v) });
+  } catch (e) { res.status(502).json({ error: "chain read failed" }); }
+});
+
+// A round's settlement as this server knows it: the worker's state, the transaction, and
+// what each human seat was credited once settled.
+router.get("/chain/round/:roundId", async (req, res) => {
+  const id = req.params.roundId;
+  if (!/^0x[0-9a-f]{64}$/.test(id)) return res.status(400).json({ error: "bad round id" });
+  try {
+    const r = await query("SELECT id, status, chain_status, tx_hash, settled_block, chain_error FROM rounds WHERE onchain_round_id = $1", [id]);
+    if (!r.rows.length) return res.status(404).json({ error: "unknown round" });
+    const row = r.rows[0];
+    const p = await query("SELECT participant, placement, payout_units FROM round_results WHERE round_id = $1 AND NOT is_bot ORDER BY placement", [row.id]);
+    res.json({
+      roundId: id, status: row.status, chainStatus: row.chain_status, txHash: row.tx_hash, settledBlock: row.settled_block === null ? null : Number(row.settled_block),
+      error: row.chain_status === 'dead' || row.chain_status === 'stalled' ? row.chain_error : null,
+      payouts: p.rows.map((x) => ({ participant: x.participant, placement: x.placement, payoutUnits: x.payout_units === null ? null : String(x.payout_units), usd: x.payout_units === null ? null : usd(x.payout_units) })),
+    });
+  } catch (e) { res.status(500).json({ error: "lookup failed" }); }
+});
 
 // Health check
 router.get("/health", (req, res) => {
