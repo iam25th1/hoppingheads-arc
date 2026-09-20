@@ -16,6 +16,8 @@ import { createBotBrain, stepBot, botSpeed } from "../game/botDriver.js";
 import { createSpawns } from "../game/spawns.js";
 import { createPowerupState, spawnIfDue, expire, pickups, hasEffect } from "../game/powerups.js";
 import { isBotId, isHumanId, guestId } from "../game/ids.js";
+import { chainConfig, chainEnabled, entered as chainEntered, waitForEntry, entryAmount as chainEntryAmount, usd } from "../chain/escrow.js";
+import { departedSnapshot, rankSeats } from "../game/settlementRoster.js";
 
 const require = createRequire(import.meta.url);
 const layoutModule = require("../../../shared/layout.cjs");
@@ -84,9 +86,92 @@ function createLobby(mode) {
     tickInterval:null, countdownInterval:null, autoStartTimer:null,
     waitStartedAt:null, waitTickInterval:null,
     createdAt:Date.now(),
+    // Phase 4, stakeable lobbies only: the on chain round, its commitment, what the
+    // worker has done with it (chainStatus mirrors rounds.chain_status), the poll that
+    // watches for the open, and the humans who left mid round with their score frozen.
+    onchainRoundId:null, seedCommit:null, chainStatus:null, chainWatch:null, departed:[],
   };
   lobbies.set(id, lobby);
   return lobby;
+}
+
+/** Every timer a lobby owns, cleared. */
+function clearLobbyTimers(lobby) {
+  if (lobby.waitTickInterval) clearInterval(lobby.waitTickInterval);
+  if (lobby.tickInterval) clearInterval(lobby.tickInterval);
+  if (lobby.countdownInterval) clearInterval(lobby.countdownInterval);
+  if (lobby.autoStartTimer) clearTimeout(lobby.autoStartTimer);
+  if (lobby.chainWatch) clearInterval(lobby.chainWatch);
+  lobby.waitTickInterval = lobby.tickInterval = lobby.countdownInterval = lobby.autoStartTimer = lobby.chainWatch = null;
+}
+
+const stakedCount = (lobby) => Array.from(lobby.players.values()).filter((p) => !p.isBot && p.staked).length;
+
+/** What a client needs to stake: the round, whether it is open at the escrow, the price. */
+async function stakeInfo(lobby) {
+  const cfg = chainConfig();
+  let amount = null;
+  try { amount = await chainEntryAmount(); } catch (e) { console.warn(`[Chain] entryAmount failed: ${e.message}`); }
+  return {
+    roundId: lobby.onchainRoundId, open: lobby.chainStatus === 'open',
+    chainId: cfg.chainId, escrow: cfg.escrow, usdc: cfg.usdc, permit2: cfg.permit2, explorer: cfg.explorer, rpcUrl: cfg.rpcUrl,
+    entryAmount: amount === null ? null : amount.toString(), entryUsd: amount === null ? null : usd(amount),
+  };
+}
+
+/**
+ * A stakeable lobby is a round from birth. The row, the on chain id and the commitment
+ * exist before anyone can stake; the settlement worker (its own service, the only holder
+ * of the operator key) opens it at the escrow and flips chain_status to open, which this
+ * poll turns into stake:open for the room.
+ */
+async function issueLobbyRound(io, lobby) {
+  const round = await issueRound({ mode: lobby.rules.roundMode, mapIndex: lobby.mapIndex, maxPlayers: MAX_PLAYERS, durationSecs: ROUND_DURATION, stakeable: true });
+  lobby.seed = round.seed;
+  lobby.roundId = round.id;
+  lobby.onchainRoundId = round.onchainRoundId;
+  lobby.seedCommit = round.seedCommit;
+  lobby.chainStatus = round.id === null ? 'dead' : 'open_requested';
+  if (round.id === null) { console.error(`[Chain] lobby ${lobby.id}: no round row, the worker cannot open it`); return; }
+  lobby.chainWatch = setInterval(async () => {
+    try {
+      const r = await query('SELECT chain_status FROM rounds WHERE id = $1', [lobby.roundId]);
+      const st = r.rows[0]?.chain_status;
+      if (st === 'open' && lobby.chainStatus !== 'open') {
+        lobby.chainStatus = 'open';
+        clearInterval(lobby.chainWatch); lobby.chainWatch = null;
+        io.to(`lobby:${lobby.id}`).emit('stake:open', await stakeInfo(lobby));
+      } else if (st === 'dead' || st === 'stalled') {
+        lobby.chainStatus = st;
+        clearInterval(lobby.chainWatch); lobby.chainWatch = null;
+        io.to(`lobby:${lobby.id}`).emit('stake:failed', { reason: 'The round could not be opened on chain. Nothing was charged. Try again in a moment.' });
+      }
+    } catch (e) { console.warn(`[Chain] watch failed: ${e.message}`); }
+  }, 2000);
+}
+
+/**
+ * The wait before a countdown. A sandbox lobby starts it when enough seats are taken;
+ * a stakeable lobby when the first human is confirmed staked, so nobody's ten seconds
+ * run while their wallet is still open.
+ */
+function startWait(io, lobby) {
+  if (lobby.waitStartedAt || lobby.status !== 'waiting') return;
+  lobby.waitStartedAt = Date.now();
+  io.to(`lobby:${lobby.id}`).emit('auto:starting', { seconds: waitSecondsFor(lobby) });
+
+  // Tick every second to update clients with remaining wait time
+  lobby.waitTickInterval = setInterval(() => {
+    if (lobby.status !== 'waiting') { clearInterval(lobby.waitTickInterval); return; }
+    const elapsed = Math.floor((Date.now() - lobby.waitStartedAt) / 1000);
+    const remaining = Math.max(0, waitSecondsFor(lobby) - elapsed);
+    io.to(`lobby:${lobby.id}`).emit('lobby:wait', { seconds: remaining, players: lobby.players.size, max: MAX_PLAYERS, staked: lobby.rules.stakeable ? stakedCount(lobby) : undefined });
+    if (remaining <= 0) {
+      clearInterval(lobby.waitTickInterval);
+      lobby.waitTickInterval = null;
+      beginCountdown(io, lobby).catch((e) => console.error('[MP] Countdown failed:', e.message));
+    }
+  }, 1000);
 }
 
 /**
@@ -221,6 +306,11 @@ export function initGameSocket(io) {
         socket.emit('auth:denied', { reason: 'Connect a wallet to enter the arena.' });
         return;
       }
+      // The Arena is a staked round or nothing. Quick Play never reaches this.
+      if (rules.stakeable && !chainEnabled()) {
+        socket.emit('auth:denied', { reason: 'The Arena is offline: no escrow is configured on this server.' });
+        return;
+      }
       if (address) {
         // One seat per address across live lobbies
         for (const l of lobbies.values()) {
@@ -240,6 +330,7 @@ export function initGameSocket(io) {
       // Lobbies are per mode. The server selects the ruleset; the client only asks.
       let lobby = findOpenLobby(lobbyMode);
       if (!lobby) lobby = createLobby(lobbyMode);
+      if (lobby.rules.stakeable && !lobby.seed) await issueLobbyRound(io, lobby);
 
       const playerIndex = lobby.players.size;
 
@@ -282,6 +373,21 @@ export function initGameSocket(io) {
 
       console.log(`[MP] ${pName} joined lobby ${lobby.id} (${lobby.players.size}/${MAX_PLAYERS})`);
 
+      if (lobby.rules.stakeable) {
+        // The price and the round, then whether this address already entered it (a
+        // reconnect after staking). The chain's word, never the client's.
+        const info = await stakeInfo(lobby);
+        socket.emit('stake:info', info);
+        if (info.open) {
+          try {
+            if (await chainEntered(lobby.onchainRoundId, address)) {
+              const seat = lobby.players.get(playerId);
+              if (seat) { seat.staked = true; socket.emit('stake:confirmed', { roundId: lobby.onchainRoundId }); io.to(`lobby:${lobby.id}`).emit('lobby:staked', { count: stakedCount(lobby) }); startWait(io, lobby); }
+            }
+          } catch (e) { console.warn(`[Chain] entered() at join failed: ${e.message}`); }
+        }
+      }
+
       // Full lobby: start immediately
       if (lobby.players.size >= MAX_PLAYERS && lobby.status === 'waiting') {
         if (lobby.waitTickInterval) { clearInterval(lobby.waitTickInterval); lobby.waitTickInterval = null; }
@@ -290,24 +396,32 @@ export function initGameSocket(io) {
         beginCountdown(io, lobby).catch((e) => console.error('[MP] Countdown failed:', e.message));
       }
       // Enough to start a wait: MIN_PLAYERS humans, or a single human when the
-      // mode fills empty seats with bots at countdown.
-      else if (lobby.players.size >= (lobby.rules.bots ? 1 : MIN_PLAYERS) && !lobby.waitStartedAt && lobby.status === 'waiting') {
-        lobby.waitStartedAt = Date.now();
-        io.to(`lobby:${lobby.id}`).emit('auto:starting', { seconds: waitSecondsFor(lobby) });
-
-        // Tick every second to update clients with remaining wait time
-        lobby.waitTickInterval = setInterval(() => {
-          if (lobby.status !== 'waiting') { clearInterval(lobby.waitTickInterval); return; }
-          const elapsed = Math.floor((Date.now() - lobby.waitStartedAt) / 1000);
-          const remaining = Math.max(0, waitSecondsFor(lobby) - elapsed);
-          io.to(`lobby:${lobby.id}`).emit('lobby:wait', { seconds: remaining, players: lobby.players.size, max: MAX_PLAYERS });
-          if (remaining <= 0) {
-            clearInterval(lobby.waitTickInterval);
-            lobby.waitTickInterval = null;
-            beginCountdown(io, lobby).catch((e) => console.error('[MP] Countdown failed:', e.message));
-          }
-        }, 1000);
+      // mode fills empty seats with bots at countdown. A stakeable lobby waits for
+      // its first confirmed stake instead (startWait from stake:submitted).
+      else if (!lobby.rules.stakeable && lobby.players.size >= (lobby.rules.bots ? 1 : MIN_PLAYERS)) {
+        startWait(io, lobby);
       }
+    });
+
+    // The player says a stake transaction went out. That is a hint about when to look:
+    // the seat is staked when the chain says this address entered this round, and not
+    // before. One check at a time per seat, ninety seconds long.
+    socket.on('stake:submitted', async ({ txHash } = {}) => {
+      if (!currentLobby || !playerId || !currentLobby.rules.stakeable) return;
+      if (typeof txHash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) return;
+      const p = currentLobby.players.get(playerId);
+      if (!p || p.staked || p.stakeCheck) return;
+      if (currentLobby.chainStatus !== 'open') { socket.emit('stake:failed', { reason: 'The round is not open on chain yet.' }); return; }
+      const lobby = currentLobby;
+      p.stakeCheck = true;
+      const ok = await waitForEntry(lobby.onchainRoundId, playerId, 90_000);
+      p.stakeCheck = false;
+      if (!lobby.players.has(playerId)) return; // left while we looked
+      if (!ok) { socket.emit('stake:failed', { reason: 'Your entry was not seen on chain within 90 seconds. If the transaction went through, rejoin and it will be recognised.' }); return; }
+      p.staked = true;
+      socket.emit('stake:confirmed', { roundId: lobby.onchainRoundId });
+      io.to(`lobby:${lobby.id}`).emit('lobby:staked', { count: stakedCount(lobby) });
+      startWait(io, lobby);
     });
 
     socket.on('pos', ({ x, y, z, ry, moving, fc, sh }) => {
@@ -390,6 +504,10 @@ export function initGameSocket(io) {
 
     socket.on('disconnect', () => {
       if (!currentLobby || !playerId) return;
+      // A human leaving a live round keeps their place by the score they had: their
+      // stake settles like anyone else's. Nothing is refunded and nothing is invented.
+      const seat = currentLobby.players.get(playerId);
+      if (seat && !seat.isBot && currentLobby.status === 'active') currentLobby.departed.push(departedSnapshot(seat));
       currentLobby.players.delete(playerId);
       io.to(`lobby:${currentLobby.id}`).emit('player:left', { id:playerId, count:currentLobby.players.size });
 
@@ -402,11 +520,21 @@ export function initGameSocket(io) {
       // No humans left: tear the lobby down. Bots never leave on their own,
       // so a size check alone would keep a bot only round running to the end.
       if (countSeats(currentLobby.players).humans === 0) {
-        if (currentLobby.waitTickInterval) clearInterval(currentLobby.waitTickInterval); // or an empty lobby counts down and plays alone
-        if (currentLobby.tickInterval) clearInterval(currentLobby.tickInterval);
-        if (currentLobby.countdownInterval) clearInterval(currentLobby.countdownInterval);
-        if (currentLobby.autoStartTimer) clearTimeout(currentLobby.autoStartTimer);
+        // A live stakeable round with stakes in it ends now, with the departed seats
+        // in the results, so the settlement worker settles it. Anything else is torn
+        // down and its row closed as abandoned, so it never counts as completed in the
+        // score distribution or sits as active forever.
+        if (currentLobby.rules.stakeable && currentLobby.status === 'active') {
+          clearLobbyTimers(currentLobby);
+          endRound(io, currentLobby);
+          return;
+        }
+        clearLobbyTimers(currentLobby); // or an empty lobby counts down and plays alone
         lobbies.delete(currentLobby.id);
+        if (currentLobby.roundId && currentLobby.status !== 'ended') {
+          query(`UPDATE rounds SET status = 'abandoned', end_time = NOW() WHERE id = $1 AND status <> 'completed'`, [currentLobby.roundId])
+            .catch((e) => console.error('[MP] abandon error:', e.message));
+        }
       }
     });
   });
@@ -425,10 +553,31 @@ async function beginCountdown(io, lobby) {
   lobby.status = 'countdown';
   if (lobby.waitTickInterval) { clearInterval(lobby.waitTickInterval); lobby.waitTickInterval = null; }
   // The seed is issued here, at countdown, so bot ids can carry the run's
-  // seed prefix (ids.js). It reaches clients on round:start as before.
-  const round = await issueRound({ mode: lobby.rules.roundMode, mapIndex: lobby.mapIndex, maxPlayers: MAX_PLAYERS, durationSecs: ROUND_DURATION, stakeable: lobby.rules.stakeable });
-  lobby.seed = round.seed;
-  lobby.roundId = round.id;
+  // seed prefix (ids.js). It reaches clients on round:start as before. A
+  // stakeable lobby was issued its round at birth (issueLobbyRound).
+  if (!lobby.seed) {
+    const round = await issueRound({ mode: lobby.rules.roundMode, mapIndex: lobby.mapIndex, maxPlayers: MAX_PLAYERS, durationSecs: ROUND_DURATION, stakeable: lobby.rules.stakeable });
+    lobby.seed = round.seed;
+    lobby.roundId = round.id;
+  }
+  // A seat that did not stake does not play a staked round. The socket is told, then
+  // dropped by the server, so a client that ignores the message is out all the same.
+  if (lobby.rules.stakeable) {
+    for (const p of Array.from(lobby.players.values())) {
+      if (p.isBot || p.staked) continue;
+      const s = io.sockets.sockets.get(p.socketId);
+      if (s) { s.emit('stake:missing', { roundId: lobby.onchainRoundId }); s.disconnect(true); }
+      else { lobby.players.delete(p.id); io.to(`lobby:${lobby.id}`).emit('player:left', { id: p.id, count: lobby.players.size }); }
+    }
+    if (countSeats(lobby.players).humans === 0) {
+      // Nobody staked: no round. The row closes as abandoned; the worker still settles
+      // the opened round with no placements so the escrow's record is closed too.
+      clearLobbyTimers(lobby);
+      lobbies.delete(lobby.id);
+      if (lobby.roundId) query(`UPDATE rounds SET status = 'abandoned', end_time = NOW() WHERE id = $1`, [lobby.roundId]).catch((e) => console.error('[MP] abandon error:', e.message));
+      return;
+    }
+  }
   // Fill empty seats with bots. They join the roster like anyone else.
   if (lobby.rules.bots && lobby.players.size < BOT_FILL_TO) {
     for (const bot of fillWithBots(lobby, lobby.seed, BOT_FILL_TO, MAX_PLAYERS, MINT_LIMIT)) {
@@ -522,11 +671,8 @@ async function startRound(io, lobby) {
 
 function endRound(io, lobby) {
   lobby.status = 'ended';
-  const results = Array.from(lobby.players.values())
-    .map(p => ({ id:p.id, name:sanitize(p.name, 12), score:p.score, minted:p.minted,
-      fragments:p.fragments.reduce((a,b)=>a+b,0) }))
-    .sort((a, b) => b.score - a.score)
-    .map((r, i) => ({ ...r, placement:i+1 }));
+  // Live seats and the humans who left mid round, ranked together (settlementRoster.js).
+  const results = rankSeats([...lobby.players.values(), ...lobby.departed], sanitize);
 
   // Refused claims and movement flags per player. Zero for honest clients;
   // anything else is the trail phase 5 reads.
@@ -539,7 +685,9 @@ function endRound(io, lobby) {
   // Emit the public result fields only
   io.to(`lobby:${lobby.id}`).emit('round:end', { results: results.map(r => ({
     id:r.id, name:r.name, score:r.score, minted:r.minted, fragments:r.fragments, placement:r.placement
-  }))});
+  })),
+  // A staked round settles on chain after this; the client polls /api/chain/round/:id.
+  settlement: lobby.rules.stakeable ? { roundId: lobby.onchainRoundId, status: 'pending' } : undefined });
   console.log(`[MP] Round ended lobby ${lobby.id}. Winner: ${results[0]?.name} (${results[0]?.score})`);
 
   saveResults(results, lobby).catch(e => console.error('[MP] Save error:', e.message));

@@ -1,0 +1,16 @@
+{
+  "name": "hh-arc-settler",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Opens and settles Arena rounds at the escrow on Arc. Its own process, the operator key, nonce discipline on every transaction.",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "pg": "8.20.0",
+    "viem": "2.56.8"
+  }
+}

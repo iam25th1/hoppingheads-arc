@@ -12,6 +12,9 @@ import { spawnSync } from 'node:child_process';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TEST_DIR = path.join(ROOT, 'server', 'tests');
+// Phase 4: the signer and the settlement worker carry their own suites and their own
+// node_modules; resolution walks up from each file, so they run from here unchanged.
+const SERVICE_TEST_DIRS = ['services/signer/test', 'services/settler/test'].map((d) => path.join(ROOT, d)).filter((d) => fs.existsSync(d));
 
 function collect(dir, out = []) {
   if (!fs.existsSync(dir)) return out;
@@ -23,7 +26,7 @@ function collect(dir, out = []) {
   return out;
 }
 
-const files = collect(TEST_DIR);
+const files = [TEST_DIR, ...SERVICE_TEST_DIRS].flatMap((d) => collect(d));
 
 if (files.length === 0) {
   console.error(`[test] no *.test.js files found under ${path.relative(ROOT, TEST_DIR)}`);

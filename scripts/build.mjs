@@ -30,6 +30,7 @@ const SERVED = [
   'shared/prng.cjs',
   'shared/layout.cjs',
   'shared/mapObstacles.cjs',
+  'shared/escrowAbi.cjs',
 ];
 for (const rel of SERVED) {
   if (!fs.existsSync(path.join(ROOT, rel))) failures.push(`missing served file: ${rel}`);

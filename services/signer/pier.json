@@ -1,0 +1,14 @@
+{
+  "name": "hh-arc-signer",
+  "runtime": "node",
+  "command": "node index.js",
+  "port": 7520,
+  "healthPath": "/health",
+  "autostart": false,
+  "deploySteps": [
+    "git fetch --quiet origin",
+    "git checkout --quiet 3d2dfa1c086949f97f90a2a82046acf7c759e83b",
+    "npm ci --ignore-scripts"
+  ],
+  "notes": "Settlement signer for Hopping Heads Arc. Holds SIGNER_KEY and nothing else; the game server never sees it. Register from its own clone of the repo so the pin cannot move the game server's checkout. Env (SIGNER_KEY, SIGNER_TOKEN, CHAIN_ID, ESCROW_ADDRESS, PORT, BIND) lives in Pier; see .env.example. Deploy checks out the reviewed commit named in deploySteps, never pulls."
+}

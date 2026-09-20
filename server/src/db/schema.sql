@@ -46,6 +46,35 @@ CREATE TABLE IF NOT EXISTS rounds (
 ALTER TABLE rounds ADD COLUMN IF NOT EXISTS stakeable BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE rounds DROP CONSTRAINT IF EXISTS rounds_stakeable_arena_only;
 ALTER TABLE rounds ADD CONSTRAINT rounds_stakeable_arena_only CHECK (NOT stakeable OR mode = 'arena');
+
+-- Phase 4: settlement on chain. The SERIAL id is not the on chain round id; the escrow
+-- keys rounds by a bytes32 the server draws when a stakeable round is issued. The seed
+-- commitment is keccak256(seed), what openRound is called with (commit_hash above is the
+-- result set commitment, a different thing). chain_status is the worker's state machine:
+-- none (never on chain), open_requested, open, settle_requested, settling, settled,
+-- stalled (a transaction accepted but not mined past its deadline: alert), dead (given
+-- up after repeated failure: alert). settlement is the replayable record: seed, commit,
+-- digest, placements, signature, memo index, written by the worker when it settles.
+ALTER TABLE rounds ADD COLUMN IF NOT EXISTS onchain_round_id VARCHAR(66);
+ALTER TABLE rounds ADD COLUMN IF NOT EXISTS seed_commit VARCHAR(66);
+ALTER TABLE rounds ADD COLUMN IF NOT EXISTS settled_block BIGINT;
+ALTER TABLE rounds ADD COLUMN IF NOT EXISTS chain_status VARCHAR(20) NOT NULL DEFAULT 'none';
+ALTER TABLE rounds ADD COLUMN IF NOT EXISTS open_tx_hash VARCHAR(66);
+ALTER TABLE rounds ADD COLUMN IF NOT EXISTS settlement JSONB;
+ALTER TABLE rounds ADD COLUMN IF NOT EXISTS chain_error TEXT;
+ALTER TABLE rounds ADD COLUMN IF NOT EXISTS chain_attempts SMALLINT NOT NULL DEFAULT 0;
+-- Rows from before this phase: stakeable arena rounds that were never on chain get a
+-- derived id so the rule below holds; chain_status none says they were never opened.
+UPDATE rounds SET onchain_round_id = '0x' || encode(sha256(decode(substr(seed, 3), 'hex')), 'hex')
+  WHERE stakeable AND onchain_round_id IS NULL AND seed IS NOT NULL;
+UPDATE rounds SET onchain_round_id = '0x' || encode(sha256(convert_to(id::text || ':legacy-no-seed', 'UTF8')), 'hex')
+  WHERE stakeable AND onchain_round_id IS NULL;
+ALTER TABLE rounds DROP CONSTRAINT IF EXISTS rounds_stakeable_has_onchain_id;
+ALTER TABLE rounds ADD CONSTRAINT rounds_stakeable_has_onchain_id CHECK (NOT stakeable OR onchain_round_id IS NOT NULL);
+ALTER TABLE rounds DROP CONSTRAINT IF EXISTS rounds_chain_status_known;
+ALTER TABLE rounds ADD CONSTRAINT rounds_chain_status_known CHECK (chain_status IN ('none','open_requested','open','settle_requested','settling','settled','stalled','dead'));
+CREATE UNIQUE INDEX IF NOT EXISTS idx_rounds_onchain ON rounds(onchain_round_id) WHERE onchain_round_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_rounds_chain_status ON rounds(chain_status) WHERE chain_status IN ('open_requested','settle_requested','settling','stalled');
 CREATE INDEX IF NOT EXISTS idx_rounds_status ON rounds(status);
 CREATE INDEX IF NOT EXISTS idx_rounds_created ON rounds(created_at DESC);
 
@@ -63,6 +92,11 @@ CREATE TABLE IF NOT EXISTS round_results (
   created_at    TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(round_id, participant)
 );
+-- Phase 4: what the settlement credited this seat, USDC in 6 decimal units. NULL until the
+-- round settles; 0 for a seat the tiers did not reach; never set on a bot row.
+ALTER TABLE round_results ADD COLUMN IF NOT EXISTS payout_units BIGINT;
+ALTER TABLE round_results DROP CONSTRAINT IF EXISTS round_results_bots_unpaid;
+ALTER TABLE round_results ADD CONSTRAINT round_results_bots_unpaid CHECK (NOT is_bot OR payout_units IS NULL);
 CREATE INDEX IF NOT EXISTS idx_rr_round ON round_results(round_id);
 CREATE INDEX IF NOT EXISTS idx_rr_participant ON round_results(participant);
 CREATE INDEX IF NOT EXISTS idx_rr_score ON round_results(score DESC);

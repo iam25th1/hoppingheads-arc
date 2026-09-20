@@ -27,6 +27,8 @@ jobs:
         run: |
           npm ci --ignore-scripts
           npm --prefix contracts ci --ignore-scripts
+          npm --prefix services/signer ci --ignore-scripts
+          npm --prefix services/settler ci --ignore-scripts
 
       # Arc Foundry (circlefin/arc-foundry): forge, cast and anvil that run Arc's own EVM.
       # Pinned release, checksum verified, installed under the arc- prefix like the README says.

@@ -14,6 +14,7 @@ Phase records:
 - [docs/phase2f-visual.md](docs/phase2f-visual.md): the menu and the lobby against the original. Both unchanged, with the function hashes, the bisect and the scene census that show it; local NPCs hidden through the Arena countdown.
 - [docs/phase2g-menumap.md](docs/phase2g-menumap.md): the map behind the menu, restored at cold load and on return from a round; the countdown asks the round flag, not the world.
 - [docs/phase3-escrow.md](docs/phase3-escrow.md): the escrow on Arc testnet. ArenaEscrow behind IArenaSettlement, the Arc constraints, the threat model, the tiers, the CLI cycle and the runbook; the PRNG warm up and the bot speed cap.
+- [docs/phase4-wire.md](docs/phase4-wire.md): the Arena wired to the escrow. Stake on entry, settle on result, claim from the menu; the signer and the settlement worker as their own services; nonce discipline; the score distribution and why the tiers stayed provisional.
 
 ## Run it
 

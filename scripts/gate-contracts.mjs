@@ -44,6 +44,15 @@ function run(cmd, args, env = {}) {
 const freePort = () => new Promise((res) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); }); });
 
 run(forge, ['build']);
+// contracts/abi/ArenaEscrow.json is what the services and the client load; it must be the
+// build's ABI, byte for byte, so a contract change cannot ship with a stale interface.
+{
+  const r = spawnSync(forge, ['inspect', 'ArenaEscrow', 'abi', '--json'], { cwd: DIR, encoding: 'utf8' });
+  if (r.status !== 0) { console.error('[contracts] arc-forge inspect failed'); process.exit(1); }
+  const built = JSON.stringify(JSON.parse(r.stdout));
+  const committed = JSON.stringify(JSON.parse(fs.readFileSync(path.join(DIR, 'abi', 'ArenaEscrow.json'), 'utf8')));
+  if (built !== committed) { console.error('[contracts] contracts/abi/ArenaEscrow.json differs from the build. Regenerate: cd contracts && arc-forge inspect ArenaEscrow abi --json > abi/ArenaEscrow.json'); process.exit(1); }
+}
 run(forge, ['test', '--no-match-contract', 'Arc', ...NET]);
 
 if (!anvil) {

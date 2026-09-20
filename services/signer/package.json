@@ -1,0 +1,15 @@
+{
+  "name": "hh-arc-signer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Signs ArenaEscrow settlements and nothing else. Its own process, its own key, loopback only.",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "ethers": "6.16.0"
+  }
+}

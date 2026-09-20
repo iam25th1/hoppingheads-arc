@@ -10,6 +10,7 @@ import helmet from "helmet";
 import apiRoutes from "./routes/api.js";
 import { initDb } from "./db/pool.js";
 import { initGameSocket } from "./ws/gameSocket.js";
+import { initChain } from "./chain/escrow.js";
 import { walletAuthRoutes } from "./utils/walletAuth.js";
 
 import path from "path";
@@ -58,7 +59,7 @@ app.get('/privacy', (req, res) => {
 // scripts. Explicit content type because helmet sets nosniff and the files
 // are .cjs on disk.
 const SHARED_DIR = path.join(__dirname, "..", "..", "shared");
-for (const name of ["prng", "layout", "mapObstacles"]) {
+for (const name of ["prng", "layout", "mapObstacles", "escrowAbi"]) {
   app.get(`/game/lib/${name}.js`, (req, res) => {
     res.type("application/javascript").sendFile(path.join(SHARED_DIR, `${name}.cjs`));
   });
@@ -144,6 +145,8 @@ async function boot() {
   try {
     await initDb();
     console.log("[Boot] Database ready");
+    // The Arena's chain: asked of the RPC, accepted only if it is Arc (or a local node).
+    await initChain();
   } catch (err) {
     console.error("[Boot] Database init failed:", err.message);
     console.warn("[Boot] Continuing without database (dev mode)");
