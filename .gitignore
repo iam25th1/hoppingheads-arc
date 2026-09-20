@@ -7,3 +7,7 @@ dist/
 .DS_Store
 .lint-tmp/
 .build-tmp-*/
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+contracts/cli/rounds/

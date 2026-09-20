@@ -26,7 +26,16 @@ const require = createRequire(import.meta.url);
 const prng = require("../../../shared/prng.cjs");
 const layoutModule = require("../../../shared/layout.cjs");
 
-export const BOT_SPEED = 14; // units per second, unboosted
+export const BOT_SPEED = 14; // units per second, unboosted, before the cap
+
+/**
+ * The speed to drive a bot at: its own pace, doubled when boosted, and never
+ * above the cap the movement judge holds this seat to (movement.js growCap of
+ * the base or boost speed). The caller knows the seat; this stays pure.
+ */
+export function botSpeed(cap, boosted) {
+  return Math.min(boosted ? BOT_SPEED * 2 : BOT_SPEED, cap);
+}
 export const BOT_TICK_S = 0.1; // nominal step; the server passes the real elapsed time
 export const MAX_STEP_S = 0.25; // a stalled tick loses ground rather than leaping
 export const SEEK_RANGE = 60; // a fragment this close is worth going for

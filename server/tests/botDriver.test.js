@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { createBotBrain, stepBot, botStreamSeed, BOT_SPEED } from '../src/game/botDriver.js';
-import { createMoveState, judgeMove } from '../src/game/movement.js';
+import { createBotBrain, stepBot, botStreamSeed, botSpeed, BOT_SPEED } from '../src/game/botDriver.js';
+import { createMoveState, judgeMove, growCap, BASE_SPEED } from '../src/game/movement.js';
 
 const require = createRequire(import.meta.url);
 const layout = require('../../shared/layout.cjs');
@@ -62,6 +62,44 @@ test('a bot never trips the movement check, at base speed cap, with jittered tic
     }
     assert.equal(flags, 0, `slot ${slot} flagged ${flags} times`);
   }
+});
+
+test('bot speed follows the grown cap: a full round of growing bots produces zero flags', () => {
+  // 180 seconds at 70..130ms ticks, the judge holding each bot to growCap(BASE_SPEED,
+  // fragCount) exactly as applyMove does, fragCount rising with every claim (seat.fragCount
+  // in collectFragment). One bot per slot starts fresh, one starts grown (40 fragments).
+  assert.ok(botSpeed(growCap(BASE_SPEED, 48), false) < BOT_SPEED, 'a grown cap must pull the bot under its flat pace');
+  const run = (slot, startFrags) => {
+    const l = layout.createLayout(SEED, 1);
+    const brain = createBotBrain(SEED, slot);
+    const bot = { x: 0, z: 0, ry: 0 };
+    const move = createMoveState(0, 0);
+    const jitter = createBotBrain(SEED, 9 + slot).rng;
+    let now = 10000, flags = 0, fragCount = startFrags, claims = 0;
+    for (let ms = 0; ms < 180000;) {
+      const gap = 70 + Math.floor(jitter.nextFloat() * 60);
+      const cap = growCap(BASE_SPEED, fragCount);
+      const r = stepBot(brain, bot, world(l, [{ x: 20, z: -20 }]), botSpeed(cap, false), gap / 1000);
+      now += gap; ms += gap;
+      const j = judgeMove(move, r.nx, r.nz, now, cap);
+      if (j.flagged) flags++;
+      bot.x = j.x; bot.z = j.z; bot.ry = r.ry;
+      if (r.claimId !== null && !l.fragments[r.claimId].claimed) { l.fragments[r.claimId].claimed = true; fragCount = Math.min(48, fragCount + 1); claims++; }
+    }
+    return { flags, claims, fragCount };
+  };
+  for (let slot = 0; slot < 4; slot++) {
+    const fresh = run(slot, 0), grown = run(slot, 40);
+    assert.ok(fresh.claims > 0, 'slot ' + slot + ' claimed nothing, growth not exercised');
+    assert.equal(fresh.flags, 0, 'slot ' + slot + ' fresh: flagged ' + fresh.flags + ' times over ' + fresh.claims + ' claims');
+    assert.equal(grown.flags, 0, 'slot ' + slot + ' grown: flagged ' + grown.flags + ' times over ' + grown.claims + ' claims');
+  }
+  // The control: the old flat pace under a grown cap is what the judge used to clamp.
+  const l = layout.createLayout(SEED, 1);
+  const brain = createBotBrain(SEED, 0), bot = { x: 0, z: 0, ry: 0 }, move = createMoveState(0, 0);
+  let now = 10000, flags = 0;
+  for (let i = 0; i < 600; i++) { const r = stepBot(brain, bot, world(l), BOT_SPEED, 0.1); now += 100; const j = judgeMove(move, r.nx, r.nz, now, growCap(BASE_SPEED, 40)); if (j.flagged) flags++; bot.x = j.x; bot.z = j.z; bot.ry = r.ry; }
+  assert.ok(flags > 0, 'the flat pace should have been clamped under a grown cap');
 });
 
 test('a bot seeks fragments and claims only when on top of one', () => {

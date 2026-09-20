@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "node --watch server/src/index.js",
     "start": "node server/src/index.js",
-    "gate": "npm run typecheck && npm run lint && npm run test && npm run build",
+    "gate": "npm run typecheck && npm run lint && npm run test && npm run build && npm run contracts",
+    "contracts": "node scripts/gate-contracts.mjs",
     "typecheck": "node scripts/typecheck.mjs",
     "lint": "node scripts/lint.mjs",
     "test": "node scripts/test.mjs",

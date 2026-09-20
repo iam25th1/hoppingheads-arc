@@ -168,6 +168,10 @@ const HEX_A = '0x' + 'ab'.repeat(32);
 test('createRngFromHex: same seed, same sequence; golden vector', () => {
   const draw = (h, n = 8) => { const r = createRngFromHex(h); return Array.from({ length: n }, () => r.nextUint32()); };
   assert.deepEqual(draw(HEX_A), draw(HEX_A));
+  // Pinned after the phase 3 warm up (16 discarded steps). Any change to the seeding, the
+  // fold or the warm up moves this and must be a deliberate, documented break: a seed is
+  // what a round commits to.
+  assert.deepEqual(draw(HEX_A), [2992180755, 3845448935, 166350953, 3771314915, 478099446, 2930699412, 1418402411, 2513102775]);
   assert.ok(isHexSeed(HEX_A));
   assert.equal(isHexSeed('0x' + 'ab'.repeat(31)), false);
   assert.equal(isHexSeed('ab'.repeat(32)), false);
@@ -185,6 +189,30 @@ test('createRngFromHex: every hex digit of the 256 bits reaches the state', () =
     const flipped = HEX_A.slice(0, i) + (HEX_A[i] === 'a' ? 'b' : 'a') + HEX_A.slice(i + 1);
     assert.notEqual(draw(flipped), base, 'flip at hex digit ' + (i - 2) + ' had no effect');
   }
+});
+
+test('createRngFromHex: seeds that differ only in the last byte diverge from the first draw', () => {
+  // Every derived stream (bot slot, powerup and spawn tags) replaces the seed's last byte.
+  // Before the warm up that changed one byte of one state word and the first two outputs
+  // came from another, so all of them opened alike. Now: 256 tags, 256 different openings,
+  // none equal to the raw seed's, and adjacent tags differ in about half the bits.
+  const S = '0x' + Array.from({ length: 64 }, (_, i) => ((i * 7 + 13 + (i >> 5) * 5) % 16).toString(16)).join('');
+  const draw = (h, n = 8) => { const r = createRngFromHex(h); return Array.from({ length: n }, () => r.nextUint32()); };
+  const seen = new Set([draw(S).join(',')]);
+  for (let t = 0; t < 256; t++) {
+    const tagged = S.slice(0, 64) + t.toString(16).padStart(2, '0');
+    if (tagged === S) continue;
+    const k = draw(tagged).join(',');
+    assert.ok(!seen.has(k), 'tag ' + t + ' opens like another stream');
+    seen.add(k);
+    assert.notEqual(draw(tagged, 1)[0], draw(S, 1)[0], 'tag ' + t + ' shares its first draw with the raw seed');
+  }
+  let ham = 0;
+  for (let t = 0; t < 255; t++) {
+    const a = draw(S.slice(0, 64) + t.toString(16).padStart(2, '0'), 1)[0], b = draw(S.slice(0, 64) + (t + 1).toString(16).padStart(2, '0'), 1)[0];
+    let x = (a ^ b) >>> 0; while (x) { ham += x & 1; x >>>= 1; }
+  }
+  assert.ok(ham / 255 > 12 && ham / 255 < 20, 'mean hamming distance ' + (ham / 255).toFixed(2));
 });
 
 test('createRngFromHex: the all zero seed does not stick', () => {
