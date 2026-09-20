@@ -7,9 +7,11 @@
   "autostart": false,
   "deploySteps": [
     "git pull --ff-only",
+    "git submodule update --init",
     "npm ci --ignore-scripts",
     "npm --prefix server ci --ignore-scripts",
+    "npm --prefix contracts ci --ignore-scripts",
     "npm run gate"
   ],
-  "notes": "Hopping Heads Arc game server. Env (PORT, DATABASE_URL, SESSION_SECRET, ALLOWED_ORIGINS, CHAIN_ID) lives in Pier, never in the repo. See .env.example. No signer or settler service yet; those arrive in phase 3."
+  "notes": "Hopping Heads Arc game server. Env (PORT, DATABASE_URL, SESSION_SECRET, ALLOWED_ORIGINS, CHAIN_ID) lives in Pier, never in the repo. See .env.example. The escrow keys (OWNER_KEY, OPERATOR_KEY, SIGNER_KEY, PLAYER_KEY, ESCROW_ADDRESS) belong in Pier too once the settlement service exists (phase 4); phase 3 drives the contract from contracts/cli only. The contracts gate step skips with a notice when arc-forge is not on PATH."
 }

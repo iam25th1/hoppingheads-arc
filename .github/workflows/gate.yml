@@ -8,8 +8,13 @@ on:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    env:
+      # The contracts step is fatal in CI; locally it skips with a notice when arc-forge is absent.
+      CONTRACTS_REQUIRED: '1'
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive # contracts/lib/forge-std
 
       - uses: actions/setup-node@v4
         with:
@@ -19,7 +24,24 @@ jobs:
       # Scripts are disabled on install. Nothing in this repo needs a
       # postinstall, and a dependency that wants one should not get one.
       - name: Install
-        run: npm ci --ignore-scripts
+        run: |
+          npm ci --ignore-scripts
+          npm --prefix contracts ci --ignore-scripts
+
+      # Arc Foundry (circlefin/arc-foundry): forge, cast and anvil that run Arc's own EVM.
+      # Pinned release, checksum verified, installed under the arc- prefix like the README says.
+      - name: Install Arc Foundry
+        run: |
+          set -euo pipefail
+          V=v0.8.0-2
+          F=arc-foundry-$V-x86_64-unknown-linux-gnu.tar.gz
+          curl -fsSL -o "$F" "https://github.com/circlefin/arc-foundry/releases/download/$V/$F"
+          curl -fsSL -o "$F.sha256" "https://github.com/circlefin/arc-foundry/releases/download/$V/$F.sha256"
+          sha256sum -c "$F.sha256"
+          tar -xzf "$F"
+          mkdir -p "$HOME/.local/bin"
+          mv forge "$HOME/.local/bin/arc-forge"; mv cast "$HOME/.local/bin/arc-cast"; mv anvil "$HOME/.local/bin/arc-anvil"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Gate
         run: npm run gate
